@@ -18,34 +18,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ai"
-version = "0.6.3"
-dependencies = [
- "ai-chat",
- "ai-memory",
-]
-
-[[package]]
-name = "ai-chat"
-version = "0.6.3"
-dependencies = [
- "ai-memory",
- "anyhow",
- "clap",
- "jiff",
- "libc",
- "pulldown-cmark",
- "ratatui",
- "serde_json",
- "signal-hook 0.4.5",
- "syntect",
- "tempfile",
- "unicode-segmentation",
- "unicode-width",
-]
-
-[[package]]
-name = "ai-memory"
+name = "ai-tools"
 version = "0.6.3"
 dependencies = [
  "anyhow",
@@ -56,23 +29,18 @@ dependencies = [
  "jiff",
  "libc",
  "memchr",
+ "pulldown-cmark",
+ "ratatui",
  "regex",
  "serde",
  "serde_json",
+ "signal-hook 0.4.5",
+ "syntect",
  "tempfile",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "ai-tools"
-version = "0.6.3"
-dependencies = [
- "ai",
- "clap",
- "libc",
- "serde_json",
- "tempfile",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]

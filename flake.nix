@@ -29,20 +29,14 @@
                 ./Cargo.lock
                 ./src
                 ./tests
-                ./ai/src/rs
               ];
             };
             cargoLock.lockFile = ./Cargo.lock;
             nativeCheckInputs = [ pkgs.git ];
-            postCheck = ''
-              for crate in memory chat; do
-                cp Cargo.lock ai/src/rs/$crate/
-                CARGO_TARGET_DIR=$PWD/target cargo test --release --offline \
-                  --target ${pkgs.stdenv.hostPlatform.rust.rustcTarget} \
-                  --manifest-path ai/src/rs/$crate/Cargo.toml
-              done
-            '';
-            meta.mainProgram = "ai";
+            meta = {
+              mainProgram = "ai";
+              license = lib.licenses.cc0;
+            };
           };
         in
         {

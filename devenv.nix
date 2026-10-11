@@ -50,9 +50,6 @@
   # https://devenv.sh/tests/
   enterTest = ''
     cargo test
-    for manifest in ai/src/rs/*/Cargo.toml; do
-      CARGO_TARGET_DIR="$DEVENV_ROOT/target" cargo test --manifest-path "$manifest"
-    done
   '';
 
   # https://devenv.sh/git-hooks/

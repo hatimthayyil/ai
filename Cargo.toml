@@ -2,19 +2,36 @@
 name = "ai-tools"
 version = "0.6.3"
 edition = "2024"
+description = "All-in-one AI tool: permanent memory for AI agents"
+repository = "https://github.com/hatimthayyil/ai-tools"
+license = "CC0-1.0"
+include = ["/src", "/tests", "/LICENSE", "/Cargo.toml", "/Cargo.lock"]
 
 [[bin]]
 name = "ai"
 path = "src/main.rs"
 
 [dependencies]
-ai = { path = "ai/src/rs/ai" }
+anyhow = "1.0.104"
+backon = { version = "1.6.0", default-features = false, features = ["std"] }
 clap = { version = "4.6.7", features = ["derive"] }
-
-[dev-dependencies]
+getrandom = "0.4.3"
+gix = { version = "0.88.0", default-features = false, features = ["anyhow", "sha1"] }
+jiff = "0.2.37"
 libc = "0.2.190"
+memchr = "2.8.3"
+pulldown-cmark = { version = "0.13", default-features = false }
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm", "scrolling-regions"] }
+regex = "1.13.1"
+serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+signal-hook = "0.4.5"
+syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
 tempfile = "3.27.0"
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "env-filter", "std"] }
+unicode-segmentation = "1.12.0"
+unicode-width = "0.2.2"
 
 [profile.dev.package."*"]
 opt-level = 3

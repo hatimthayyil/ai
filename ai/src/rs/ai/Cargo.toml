@@ -1,8 +1,0 @@
-[package]
-name = "ai"
-version = "0.6.3"
-edition = "2024"
-
-[dependencies]
-ai-memory = { path = "../memory" }
-ai-chat = { path = "../chat" }

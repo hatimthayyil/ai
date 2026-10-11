@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-use ai::memory::{Coord, Message, REF, Store};
+use ai_tools::memory::{Coord, Message, REF, Store};
 use tempfile::TempDir;
 
 const ISOLATE: [&str; 19] = [

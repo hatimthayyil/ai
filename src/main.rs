@@ -12,9 +12,9 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     #[command(about = "Permanent memory for AI agents.")]
-    Memory(ai::memory::Cli),
+    Memory(ai_tools::memory::Cli),
     #[command(about = "An endless chat backed by permanent memory.")]
-    Chat(ai::chat::Cli),
+    Chat(ai_tools::chat::Cli),
 }
 
 fn main() -> ExitCode {

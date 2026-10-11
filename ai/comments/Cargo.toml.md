@@ -1,4 +1,17 @@
 # Cargo.toml
 
-- No `[workspace]`: originally forced by crate2nix (devenv's `languages.rust.import` only emitted `rootCrate` for a single-member workspace). The flake's `buildRustPackage` has no such limit, so a workspace is now possible; until then, library crates are plain path dependencies, each declaring its own versions, so shared dependencies (`clap`, `tempfile`) are repeated and must be bumped together.
-- `[profile.dev.package."*"] opt-level = 3`: dependencies build optimized in dev/test. gix in debug (sha1dc, zlib-rs, odb) made the in-process test suite ~5x slower (54 s vs 10 s). Our crates stay unoptimized for debugging.
+- One package, `ai-tools`, the only crate published to crates.io: a lib target (`src/lib.rs`, modules `memory` and `chat`) and the `ai` bin. No workspace, no path dependencies, no cargo features.
+- `include`: the published package holds only `src` (with the prompts), `tests` (with fixtures), `LICENSE` and the cargo files.
+- `license = "CC0-1.0"`; `LICENSE` is the CC0 1.0 Universal legal code verbatim.
+- `[profile.dev.package."*"] opt-level = 3`: dependencies build optimized in dev/test. gix in debug (sha1dc, zlib-rs, odb) made the in-process test suite ~5x slower (54 s vs 10 s). Our crate stays unoptimized for debugging.
+
+Memory:
+- `gix`: `default-features = false`, `sha1` and `anyhow`. No network: sync is gone.
+- `serde_json`: stream-json with Claude Code. `tempfile`: the backend's system-prompt files.
+- `getrandom`: the store's origin.
+- `libc`: Linux child process groups and parent-death signals.
+- `tracing`, `tracing-subscriber` (`fmt`, `env-filter`, `std`; no `ansi`, no proc-macro attributes): the nap log, see `src/memory/log.rs.md`.
+- `backon` (`default-features = false`, `std`): retry backoff for the compactor, used as an iterator of delays; no Tokio or timers pulled in. Its async `Retryable` (feature `tokio-sleep`) is the path if the compactor moves to Tokio. `backoff` is unmaintained (RUSTSEC-2025-0012, which points to backon). See ai/research/*rust-retry-crates.md.
+- `serde` (`derive`): the usage log record, written and read as JSON Lines with `serde_json`.
+
+Chat: reuses memory's storage, compaction and Claude process primitives; clap for CLI, signal-hook for terminal signals, jiff for local dates, serde_json for stream/MCP protocol. TUI: ratatui 0.30 without default features (`crossterm` backend, `scrolling-regions` for history inserts; crossterm 0.29 through `ratatui::crossterm`), unicode-width/unicode-segmentation for layout, pulldown-cmark for markdown, syntect (default syntaxes and themes, pure-Rust `regex-fancy`, no onig C build) for code. Screen tests compare `TestBackend` text directly. Fake scripts only in tests.
