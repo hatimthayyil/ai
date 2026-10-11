@@ -28,6 +28,10 @@ ai memory grep <regex>          # search every message
 
 `ai` stores memories in `~/.ai/memory`, or in `$AI_MEMORY_DIR` if you set it.
 
+## Credits
+
+`ai memory` ports Victor Taelin's [OptMem](https://github.com/VictorTaelin/OptMem) to Rust and folds notes the way his [UniiChat](https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449) (aka OptChat) folds a chat.
+
 ## Licence
 
 [CC0-1.0](LICENSE)
