@@ -84,8 +84,8 @@ mod tests {
             mcp,
             r#"{"mcpServers":{"memory":{"args":["chat","mcp"],"command":"/bin/ai","env":{"AI_MEMORY_DIR":"/m"}}}}"#
         );
-        let m = Master::new("claude".into(), "opus", "high", "Be MyAI.", mcp.clone()).unwrap();
-        assert_eq!(std::fs::read_to_string(&m.system).unwrap(), "Be MyAI.");
+        let m = Master::new("claude".into(), "opus", "high", "Be ai.", mcp.clone()).unwrap();
+        assert_eq!(std::fs::read_to_string(&m.system).unwrap(), "Be ai.");
         let (turn, prime) = (m.command(false), m.command(true));
         let args = |c: &Command| -> Vec<String> {
             c.get_args()

@@ -796,7 +796,7 @@ fn a_chat_turn_end_to_end_with_a_fake_claude() {
     assert_eq!(server["args"], serde_json::json!(["chat", "mcp"]));
     assert_eq!(server["env"]["AI_MEMORY_DIR"], s.store().to_str().unwrap());
     let system = call(1, "system");
-    assert!(system.starts_with("You are MyAI") && system.ends_with("\n\nMine."));
+    assert!(system.starts_with("You are ai") && system.ends_with("\n\nMine."));
     let blocks = |k: usize| -> Vec<serde_json::Value> {
         let m: serde_json::Value = serde_json::from_str(&call(k, "in")).unwrap();
         m["message"]["content"].as_array().unwrap().clone()

@@ -4,7 +4,7 @@
 // No database, network, models, or API calls. Small budgets expose folding behaviour.
 extern crate self as anyhow;
 pub type Result<T> = std::result::Result<T, std::io::Error>;
-mod tree { include!("/hatimthayyil/code/myai/ai/src/rs/memory/src/tree.rs"); }
+mod tree { include!("/hatimthayyil/code/ai-tools/ai/src/rs/memory/src/tree.rs"); }
 mod store {
     use crate::tree::Coord;
     pub struct Snapshot;
@@ -15,7 +15,7 @@ mod store {
         pub fn node(&self, _: Coord) -> anyhow::Result<Option<Node>> { unreachable!() }
     }
 }
-mod view { include!("/hatimthayyil/code/myai/ai/src/rs/memory/src/view.rs"); }
+mod view { include!("/hatimthayyil/code/ai-tools/ai/src/rs/memory/src/view.rs"); }
 use tree::Coord;
 use view::Mem;
 fn main() {

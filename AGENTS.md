@@ -1,8 +1,8 @@
-# AGENTS.md - MyAI
+# AGENTS.md - ai-tools
 
 ## App
 
-`MyAI` provides the `ai` CLI tool. All-in-one AI tool.
+`ai-tools` provides the `ai` CLI: all-in-one AI tool. Names: crates.io `ai-tools`, Nixpkgs `ai`, npm `@hatimthayyil/ai`.
 
 - `ai memory`: permanent memory for AI agents
 

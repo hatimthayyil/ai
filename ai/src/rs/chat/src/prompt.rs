@@ -35,9 +35,9 @@ mod tests {
     #[test]
     fn prompts_are_the_spec_s() {
         for p in [MASTER, VIEW_DOC] {
-            assert!(!p.contains("OptChat") && p.contains("MyAI"));
+            assert!(!p.contains("OptChat") && p.contains("ai"));
         }
-        assert!(MASTER.starts_with("You are MyAI, an AI agent that works for one user"));
+        assert!(MASTER.starts_with("You are ai, an AI agent that works for one user"));
         assert!(VIEW_DOC.contains("note (notes recorded by other agent sessions)"));
         assert!(
             VIEW_DOC

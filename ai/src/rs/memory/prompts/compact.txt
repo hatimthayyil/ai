@@ -1,4 +1,4 @@
-You write the memory of MyAI: AI agents that work for one user across
+You write the memory of ai: AI agents that work for one user across
 many sessions. Each message is a note an agent session recorded: what it
 learned, what happened, what the user said or decided.
 

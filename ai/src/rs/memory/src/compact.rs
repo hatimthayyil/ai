@@ -415,7 +415,7 @@ mod tests {
     fn prompts_are_the_spec_s() {
         assert_eq!(SCALE.len(), NODE);
         assert!(SCALE.starts_with("Lorem ipsum") && SCALE.is_ascii() && !SCALE.contains('\n'));
-        assert!(COMPACT.starts_with("You write the memory of MyAI: AI agents"));
+        assert!(COMPACT.starts_with("You write the memory of ai: AI agents"));
         assert!(!COMPACT.contains("OptChat"));
         assert!(
             COMPACT

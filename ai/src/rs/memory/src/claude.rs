@@ -32,7 +32,7 @@ pub fn find() -> Result<OsString> {
     let found = std::env::split_paths(&path)
         .map(|d| d.join("claude"))
         .find(|p| p.is_file())
-        .context("No claude on PATH: MyAI runs on Claude Code.")?;
+        .context("No claude on PATH: ai runs on Claude Code.")?;
     Ok(found.into())
 }
 
@@ -620,7 +620,7 @@ mod cleanup_tests {
         // A separate copy of this test executable owns the PDEATHSIG-protected child.
         let temp = TempDir::new().unwrap();
         let pidfile = temp.path().join("pid");
-        owner.arg("-c").arg("exec \"$1\" --ignored --exact claude::cleanup_tests::parent_death_helper --nocapture").arg("owner").arg(std::env::current_exe().unwrap()).env("MYAI_CHILD_PIDFILE", &pidfile).stdout(Stdio::null()).stderr(Stdio::null());
+        owner.arg("-c").arg("exec \"$1\" --ignored --exact claude::cleanup_tests::parent_death_helper --nocapture").arg("owner").arg(std::env::current_exe().unwrap()).env("AI_CHILD_PIDFILE", &pidfile).stdout(Stdio::null()).stderr(Stdio::null());
         let mut owner = owner.spawn().unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         while !pidfile.exists() {
@@ -641,7 +641,7 @@ mod cleanup_tests {
     fn parent_death_helper() {
         let p = Proc::spawn(shell("trap '' TERM; while :; do :; done"), None, |_| {}).unwrap();
         fs::write(
-            std::env::var_os("MYAI_CHILD_PIDFILE").unwrap(),
+            std::env::var_os("AI_CHILD_PIDFILE").unwrap(),
             p.pid().to_string(),
         )
         .unwrap();

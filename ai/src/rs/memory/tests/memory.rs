@@ -162,7 +162,7 @@ impl Backend for Model {
     }
 
     fn open(&self, system: &str) -> Result<Box<dyn Conversation>> {
-        assert!(system.starts_with("You write the memory of MyAI"));
+        assert!(system.starts_with("You write the memory of ai"));
         self.0.calls.fetch_add(1, Ordering::SeqCst);
         Ok(Box::new(FakeConv {
             fake: self.0.clone(),
