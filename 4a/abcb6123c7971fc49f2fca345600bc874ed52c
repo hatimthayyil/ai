@@ -1,0 +1,19 @@
+README.md
+  s_5d9e326d7a3c30::t_bd3faad8d57b90 31-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4aabcb6123c7971fc49f2fca345600bc874ed52c",
+  "prompts": {},
+  "sessions": {
+    "s_5d9e326d7a3c30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "28b6dfae-e49d-4118-830a-73c20948c36d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Hatim Thayyil <hatim@thayyil.net>"
+    }
+  }
+}
