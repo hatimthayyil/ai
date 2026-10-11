@@ -9,3 +9,4 @@
 - `forAllSystems` is `lib.genAttrs` over the four common systems; flake-utils not needed.
 - Checks: `cargoCheckHook` runs `cargo test`: unit tests in the lib, and the `tests/` integration suites.
 - `git` is the only extra check input. The fake `claude` scripts take their shebang from `bash` on `PATH` (stdenv provides it), since the sandbox has no `/usr/bin/env`.
+- `meta` and `versionCheckHook` match the Nixpkgs package (`pkgs/by-name/ai/ai`), so the flake build checks what Nixpkgs checks.

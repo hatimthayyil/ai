@@ -2,7 +2,7 @@
 
 ## App
 
-`ai-tools` provides the `ai` CLI: all-in-one AI tool. Names: crates.io `ai-tools`, Nixpkgs `ai`, npm `@hatimthayyil/ai`.
+`ai`: all-in-one AI tool.
 
 - `ai memory`: permanent memory for AI agents
 

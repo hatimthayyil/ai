@@ -33,9 +33,14 @@
             };
             cargoLock.lockFile = ./Cargo.lock;
             nativeCheckInputs = [ pkgs.git ];
+            nativeInstallCheckInputs = [ pkgs.versionCheckHook ];
+            doInstallCheck = true;
             meta = {
-              mainProgram = "ai";
+              description = "All-in-one AI tool: permanent memory for AI agents";
+              homepage = "https://github.com/hatimthayyil/ai-tools";
               license = lib.licenses.cc0;
+              mainProgram = "ai";
+              platforms = lib.platforms.unix;
             };
           };
         in
