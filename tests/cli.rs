@@ -320,7 +320,7 @@ fn provenance_comes_from_the_cwd_and_env() {
         .unwrap();
     assert_eq!(s.memories()[2].place.repo, "work");
 
-    let show = text(&s.ai(&["show", "0+1"]).stdout);
+    let show = text(&s.ai(&["show", "0"]).stdout);
     for f in [
         "kind    note\n".into(),
         format!("origin  {}\n", a.origin),
@@ -339,13 +339,16 @@ fn provenance_comes_from_the_cwd_and_env() {
         assert!(r.status.success(), "{}", text(&r.stderr));
         text(&r.stdout)
     };
-    let first = |args: &[&str]| grep(args).lines().next().unwrap().to_string();
-    let (ts, date) = (&a.ts, format!("{}-{}-{}", &a.ts[..4], &a.ts[4..6], &a.ts[6..8]));
-    assert_eq!(first(&[]), format!("0+1|{date}|noted inside a repo"));
+    let first = |args: &[&str]| grep(args).lines().take(2).collect::<Vec<_>>().join("\n");
+    let (ts, date) = (
+        &a.ts,
+        format!("{}-{}-{}", &a.ts[..4], &a.ts[4..6], &a.ts[6..8]),
+    );
+    assert_eq!(first(&[]), format!("{date}\n0|noted inside a repo"));
     assert_eq!(
         first(&["--time", "-o", "origin,repo,kind"]),
         format!(
-            "0+1|{date} {}:{}|{}|acme/widget|note|noted inside a repo",
+            "{date}\n0|{}:{}|{}|acme/widget|note|noted inside a repo",
             &ts[9..11],
             &ts[11..13],
             a.origin
@@ -354,19 +357,20 @@ fn provenance_comes_from_the_cwd_and_env() {
     let heads = |args: &[&str]| -> Vec<String> {
         grep(args)
             .lines()
+            .filter(|l| *l != date)
             .map(|l| l.split(['|', ' ']).next().unwrap().to_string())
             .collect()
     };
-    assert_eq!(heads(&["--repo", "acme/widget"]), ["0+1", "1"]);
-    assert_eq!(heads(&["--repo", "work"]), ["2+1", "1"]);
-    assert_eq!(heads(&["--agent", "pi"]), ["1+1", "1"]);
-    assert_eq!(heads(&["--session", "SESS-1"]), ["0+1", "1"]);
-    assert_eq!(heads(&["--origin", &a.origin]), ["0+1", "1+1", "2+1", "3"]);
+    assert_eq!(heads(&["--repo", "acme/widget"]), ["0", "1"]);
+    assert_eq!(heads(&["--repo", "work"]), ["2", "1"]);
+    assert_eq!(heads(&["--agent", "pi"]), ["1", "1"]);
+    assert_eq!(heads(&["--session", "SESS-1"]), ["0", "1"]);
+    assert_eq!(heads(&["--origin", &a.origin]), ["0", "1", "2", "3"]);
     assert_eq!(grep(&["--origin", "NOPE"]), "No match.\n");
-    assert_eq!(heads(&["--kind", "note"]), ["0+1", "1+1", "2+1", "3"]);
+    assert_eq!(heads(&["--kind", "note"]), ["0", "1", "2", "3"]);
     assert_eq!(
         heads(&["--since", "2000-01-01", "--agent", "claude-code"]),
-        ["0+1", "1"]
+        ["0", "1"]
     );
     assert_eq!(grep(&["--agent", "pi", "--repo", "work"]), "No match.\n");
     assert_eq!(grep(&["--since", "2999-01-01"]), "No match.\n");
@@ -499,9 +503,9 @@ fn every_command_logs_one_usage_line() {
         (&["wake"][..], "s1"),
         (&["note", "a noted memory"], "s1"),
         (&["note", "two\nlines"], "s1"),
-        (&["zoom", "0+1", "--time", "-o", "repo"], "s1"),
-        (&["zoom", "9+1"], "s1"),
-        (&["grep", "it's", "-t", "-m", "3", "--before", "0+1"], "s1"),
+        (&["zoom", "0", "--time", "-o", "repo"], "s1"),
+        (&["zoom", "9"], "s1"),
+        (&["grep", "it's", "-t", "-m", "3", "--before", "0"], "s1"),
         (&["show", "0"], "s2"),
     ] {
         by(args, session);
@@ -525,9 +529,9 @@ fn every_command_logs_one_usage_line() {
             "[]",
             "[]",
             "[]",
-            r#"["0+1","--time","-o","repo"]"#,
-            r#"["9+1"]"#,
-            r#"["it's","-t","-m","3","--before","0+1"]"#,
+            r#"["0","--time","-o","repo"]"#,
+            r#"["9"]"#,
+            r#"["it's","-t","-m","3","--before","0"]"#,
             r#"["0"]"#
         ]
     );
@@ -535,11 +539,11 @@ fn every_command_logs_one_usage_line() {
         fields("ok"),
         ["true", "true", "false", "true", "false", "true", "true"]
     );
-    assert_eq!(log[4]["error"], "No line 9+1.");
+    assert_eq!(log[4]["error"], "No line 9.");
     assert!(log[2]["error"].as_str().unwrap().contains("one line"));
     assert!(log[0].get("error").is_none());
     assert_eq!(log[1]["lines"], 1);
-    assert_eq!(log[1]["bytes"], "Saved as 0+1.\n".len());
+    assert_eq!(log[1]["bytes"], "Saved as 0.\n".len());
     assert_eq!(log[6]["lines"], 11);
     assert_eq!(log[4]["bytes"], 0);
     for (k, v) in [
@@ -654,7 +658,7 @@ fn a_note_naps_in_the_background() {
             .output()
             .unwrap();
         assert!(r.status.success(), "{}", text(&r.stderr));
-        assert_eq!(text(&r.stdout), format!("Saved as {i}+1.\n"));
+        assert_eq!(text(&r.stdout), format!("Saved as {i}.\n"));
     }
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
@@ -717,7 +721,7 @@ fi
 echo '{"type":"system","subtype":"init","model":"claude-fake","mcp_servers":[{"name":"memory","status":"connected"}]}'
 echo '{"type":"user","isReplay":true}'
 echo '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__memory__zoom","input":{"id":0,"n":1}}]}}'
-echo '{"type":"user","message":{"content":[{"type":"tool_result","content":"0+0|the code word is papaya"}]}}'
+echo '{"type":"user","message":{"content":[{"type":"tool_result","content":"0|the code word is papaya"}]}}'
 echo '{"type":"assistant","message":{"content":[{"type":"text","text":"It is papaya."}]}}'
 echo '{"type":"result","result":"It is papaya.","usage":{"input_tokens":1,"cache_read_input_tokens":9,"cache_creation_input_tokens":2,"output_tokens":3}}'
 sleep 60
@@ -754,7 +758,7 @@ fn a_chat_turn_end_to_end_with_a_fake_claude() {
     let out = text(&r.stdout);
     assert!(r.status.success(), "{}", text(&r.stderr));
     assert!(
-        out.starts_with("<chat>\n0+1|the code word is papaya\n</chat>\n"),
+        out.starts_with("<chat>\n0|the code word is papaya\n</chat>\n"),
         "{out}"
     );
     assert!(out.contains("primed: 0 read · 9 write"), "{out}");
@@ -765,7 +769,7 @@ fn a_chat_turn_end_to_end_with_a_fake_claude() {
         [
             "the code word is papaya",
             "user: what is the code word?",
-            "tool: mcp__memory__zoom {\"id\":0,\"n\":1}\n0+0|the code word is papaya",
+            "tool: mcp__memory__zoom {\"id\":0,\"n\":1}\n0|the code word is papaya",
             "ai: It is papaya.",
         ]
     );
@@ -843,10 +847,10 @@ fn a_chat_turn_end_to_end_with_a_fake_claude() {
             .to_string()
     };
     assert_eq!(replies[0]["result"]["serverInfo"]["name"], "memory");
-    assert_eq!(said(1), "3+0|ai: It is papaya.");
+    assert_eq!(said(1), "3|ai: It is papaya.");
     assert_eq!(
         said(2),
-        "0+1|the code word is papaya\n1+1|user: what is the code word?\n2+1|(tool calls: zoom it)\n3+1|ai: It is papaya."
+        "0|the code word is papaya\n1|user: what is the code word?\n2|(tool calls: zoom it)\n3|ai: It is papaya."
     );
     assert_eq!(said(3), "No message 9.");
 }

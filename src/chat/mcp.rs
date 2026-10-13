@@ -164,9 +164,7 @@ mod tests {
         assert_eq!(replies[0]["result"]["capabilities"], json!({"tools":{}}));
         assert_eq!(replies[1]["result"]["tools"].as_array().unwrap().len(), 2);
         let first = replies[2]["result"]["content"][0]["text"].as_str().unwrap();
-        assert!(
-            first.starts_with("0+0|user: é") && first.contains("Next: zoom(id=0, n=1, part=2)")
-        );
+        assert!(first.starts_with("0|user: é") && first.contains("Next: zoom(id=0, n=1, part=2)"));
         assert!(first.chars().count() <= 30_000);
         assert!(
             replies[3]["result"]["content"][0]["text"]

@@ -20,7 +20,7 @@ use gix::{
 
 use crate::memory::{
     config::{Config, SECTION, SUBSECTION},
-    meta::span,
+    meta::stamp,
     record::{Message, Node, Who, now},
     tree::{Coord, free, joined},
 };
@@ -197,7 +197,7 @@ impl Store {
     }
 
     /// The memory as of `commit`; `None` is the empty memory.
-    pub fn at(&self, commit: Option<ObjectId>) -> Result<Snapshot<'_>> {
+    fn at(&self, commit: Option<ObjectId>) -> Result<Snapshot<'_>> {
         let tree = match commit {
             Some(c) => self.repo.find_commit(c)?.tree_id()?.detach(),
             None => ObjectId::empty_tree(self.repo.object_hash()),
@@ -208,14 +208,6 @@ impl Store {
             tree,
             cache: RefCell::default(),
         })
-    }
-
-    /// The commit a printed hex id names.
-    pub fn commit_id(&self, hex: &str) -> Result<ObjectId> {
-        let id = ObjectId::from_hex(hex.as_bytes())
-            .ok()
-            .filter(|id| self.repo.find_commit(*id).is_ok());
-        id.with_context(|| format!("'{hex}' is not a commit of this memory. Run: {ME} wake"))
     }
 
     /// Applies `change` to the latest snapshot as one commit, redoing it until the ref update wins.
@@ -399,11 +391,10 @@ impl<'a, 's> Edit<'a, 's> {
         if m.ts.is_empty() {
             m.ts = now().max(last);
         } else if m.ts < last {
-            let at = |ts: &str| span(ts, ts, true);
             bail!(
                 "A message of {} cannot follow one of {} (UTC): the log is in time order.",
-                at(&m.ts),
-                at(&last)
+                stamp(&m.ts),
+                stamp(&last)
             );
         }
         self.last = Some(m.ts.clone());
@@ -446,10 +437,6 @@ pub struct Snapshot<'s> {
 }
 
 impl Snapshot<'_> {
-    pub fn commit(&self) -> Option<ObjectId> {
-        self.commit
-    }
-
     pub fn cfg(&self) -> &Config {
         &self.store.cfg
     }

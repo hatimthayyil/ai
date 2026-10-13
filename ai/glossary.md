@@ -4,7 +4,7 @@
 - `message`: one entry of the log, with a `kind`; its blob is `log/<hi>/<lo>`: header `ts kind origin repo head branch agent model session`, then the text. Ids are positions `0, 1, …`, permanent.
 - `kind`: `user` (the user's words), `talk` (the agent's replies), `tool` (its tool calls), `echo` (tool results), `note` (`ai memory note`, `import`).
 - `node`: one summary line of the tree, ≤ ~512 bytes (`NODE`). `(l, i)` covers messages `[i·2^l, (i+1)·2^l)`; level 0 summarizes one message, level `l` merges its two children. Stored one per line (`ts origin agent model session text`) in `tree/<l>/<hi>/<lo>` segments of 256.
-- `id+n`: how a node is named: first message `id`, `n = 2^l` messages. `id+1` is one message; `zoom` and `show` take it.
+- `id+n`: how a node is named: first message `id`, `n = 2^l` messages. One message is a bare `id`; `zoom` and `show` take either.
 - `free node`: a source that fits `NODE` is its own node, no model call: a short message (`kind: text`), or two lines joined. Built in the same commit that completes its sources.
 - `view`: the nodes tiling `[0, T)`, oldest first, under `VIEW` = 128,000 bytes; grows by appending and merging the most due pair, never splits; folded again from message 0 at load. `wake` prints it; it is what `ai chat` sends each turn.
 - `placeholder`: `(not summarized yet: zoom it)`, the view line of a message whose level-0 node is not built.
@@ -12,9 +12,9 @@
 - `rule 3`: a node is built only when every view line before its end is already a summary, so the compactor never sees a placeholder.
 - `nap`: `ai memory nap`: run the compactor until nothing is buildable, then exit. `note` starts one in the background when a node is due.
 - `backend`: the compactor's model access (`Backend`/`Conversation`); now only Claude Code (`claude -p`, Sonnet, medium effort).
-- `wake`: print the view, paged into parts; later parts pinned to the first part's commit.
+- `wake`: print the view under date headers, paged into parts; `wake <id>` reads on from message `id`, as each part's last line says.
 - `part`: one page of `wake` output, bounded by `PART_CHARS`/`PART_LINES`.
-- `zoom`: open `id+n` into its two children; `id+1` gives the original message in bounded pages (`part`, from 1).
+- `zoom`: open `id+n` two levels down; a bare `id` gives the original message in bounded pages (`part`, from 1).
 - `chat`: `ai chat`, plain terminal: a fresh Claude Code process per turn (Opus, high effort by default; `--model`, `--effort`), sent the settled view and the user's whole message. Ctrl-C cancels a turn; Ctrl-D exits; on a pipe, the end of input finishes the queued turns first.
 - `priming`: a throwaway master call (same argv, `DISABLE_PROMPT_CACHING=1`) with every view block marked, killed at its first `message_start`; writes the view into the prompt cache so the turn reads it. Before a turn unless the view was primed under 270 s ago; in the background once per view change after 1 s idle. Failures are reported once and never block a turn.
 - `turn`: one fresh master call for a batch of user messages: settle, prime, render the view, log the messages, then log every reply (`talk`), tool call (`tool`) and result (`echo`, capped at 30,000 chars) as it streams; killed at its first `result`.
@@ -23,7 +23,7 @@
 - `MCP server`: `ai chat mcp`, stdio, read-only: `zoom` (paged by `PART_CHARS`) and `date` on the latest commit; tools reach the model as `mcp__memory__zoom`, `mcp__memory__date`.
 - `origin`: a store's random id (6 Crockford base-32 characters), made at `init` and kept in its git config as `ai.memory.origin`; stamped on every message and node the store writes.
 - `show`: every field of one message or node.
-- `grep`: rg-style regex search over every message's text (smart-case, `-F`, filters `--since`, `--kind`, `--origin`, `--agent`, `--session`, `--repo`; `-t` adds nodes), newest page first; `--before <id+n>` pages back.
+- `grep`: rg-style regex search over every message's text (smart-case, `-F`, filters `--since`, `--kind`, `--origin`, `--agent`, `--session`, `--repo`; `-t` adds nodes), newest page first; `--before <id>` pages back.
 - `snapshot`: the memory as of one commit; every command reads one.
 - `knob`: a per-machine size in the memory repo's git config, set with `ai memory config NAME=VALUE`: `ENTRY_CHARS`, `PART_CHARS`, `PART_LINES`.
 - `provenance`: origin of a data item: who/what produced it, when, from which session, model and commit.

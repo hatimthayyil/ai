@@ -21,6 +21,26 @@ use clap::Parser;
 use regex::Regex;
 use tempfile::TempDir;
 
+const AWAKE: &str = "You are awake. Zoom the marked lines that touch your task before you act.";
+
+/// The `(id, n)` of every line printed in `out`.
+fn line_ids(out: &str) -> Vec<(u64, u64)> {
+    out.lines()
+        .filter_map(|l| Coord::parse(l.split_once('|')?.0))
+        .collect()
+}
+
+/// Whether `ids` tile `[from, to)` in order.
+fn tiles(ids: &[(u64, u64)], from: u64, to: u64) -> bool {
+    ids.first().is_some_and(|f| f.0 == from)
+        && ids.windows(2).all(|w| w[0].0 + w[0].1 == w[1].0)
+        && ids.last().is_some_and(|l| l.0 + l.1 == to)
+}
+
+fn is_day(l: &str) -> bool {
+    l.len() == 10 && l.parse::<jiff::civil::Date>().is_ok()
+}
+
 struct Out {
     code: u8,
     stdout: String,
@@ -319,11 +339,8 @@ fn due_is_every_ready_node_oldest_level_first() {
     let mut want = leaves(&[2, 4, 5]);
     want.push(Coord::new(1, 0));
     assert_eq!(m.due(|_| false, 10), want);
-    assert_eq!(
-        m.lines()[2..4],
-        [format!("2+1|{PLACEHOLDER}"), "3+1|d".into()]
-    );
-    assert!(m.render().starts_with("<chat>\n0+1|a\n1+1|b\n") && m.render().ends_with("\n</chat>"));
+    assert_eq!(m.lines()[2..4], [format!("2|{PLACEHOLDER}"), "3|d".into()]);
+    assert!(m.render().starts_with("<chat>\n0|a\n1|b\n") && m.render().ends_with("\n</chat>"));
 }
 
 #[test]
@@ -345,10 +362,10 @@ fn short_messages_are_their_own_nodes() {
     assert_eq!(
         names,
         [
-            "0+1=user: hi there",
-            "1+1=ai: hello",
+            "0=user: hi there",
+            "1=ai: hello",
             "0+2=user: hi there ai: hello",
-            "2+1="
+            "2="
         ],
         "a tool call's line is empty"
     );
@@ -368,7 +385,7 @@ fn short_messages_are_their_own_nodes() {
     let names: Vec<_> = built.iter().map(|(c, t)| format!("{c}={t}")).collect();
     assert_eq!(
         names,
-        [format!("3+1={line}"), format!("2+2={line}")],
+        [format!("3={line}"), format!("2+2={line}")],
         "a merge with tool calls only is its other side"
     );
     assert!(
@@ -377,7 +394,7 @@ fn short_messages_are_their_own_nodes() {
     );
     assert_eq!(
         zoom(&snap, 2, 2, None).unwrap().unwrap(),
-        format!("2+1|{HIDDEN}\n3+1|{line}")
+        format!("2|{HIDDEN}\n3|{line}")
     );
     let (built, _) = s.put_node(Coord::new(2, 0), &fake_who(), "merged").unwrap();
     assert_eq!(built.len(), 1);
@@ -385,7 +402,7 @@ fn short_messages_are_their_own_nodes() {
     assert!(again.is_empty(), "built nodes never change");
     assert_eq!(
         zoom(&s.snapshot().unwrap(), 0, 4, None).unwrap().unwrap(),
-        format!("0+1|user: hi there\n1+1|ai: hello\n2+1|{HIDDEN}\n3+1|{line}"),
+        format!("0|user: hi there\n1|ai: hello\n2|{HIDDEN}\n3|{line}"),
         "a line over a free half and a merged half opens into all four messages"
     );
     assert!(s.put_node(Coord::new(3, 0), &fake_who(), "x").is_err());
@@ -393,7 +410,7 @@ fn short_messages_are_their_own_nodes() {
     assert_eq!(m.t(), 4);
     assert!(m.all_built());
     let ids: Vec<_> = m.lines().iter().map(|l| l.split('|').next().unwrap().to_string()).collect();
-    assert_eq!(ids, ["0+1", "1+1", "3+1"], "the view leaves out tool calls");
+    assert_eq!(ids, ["0", "1", "3"], "the view leaves out tool calls");
 }
 
 #[test]
@@ -409,8 +426,8 @@ fn zoom_opens_two_levels() {
     let z = |id, n| zoom(&snap, id, n, None).unwrap();
     let pair = |i: u64| format!("user: w{i} m user: w{} m", i + 1);
     let four = |i: u64| format!("{} {}", pair(i), pair(i + 2));
-    assert_eq!(z(1, 1).unwrap(), "1+0|user: w1\nm");
-    assert_eq!(z(16, 1).unwrap(), format!("16+0|ai: {}", long(16)));
+    assert_eq!(z(1, 1).unwrap(), "1|user: w1\nm");
+    assert_eq!(z(16, 1).unwrap(), format!("16|ai: {}", long(16)));
     assert_eq!(
         z(0, 16).unwrap(),
         format!(
@@ -434,12 +451,12 @@ fn zoom_opens_two_levels() {
     );
     assert_eq!(
         z(4, 4).unwrap(),
-        "4+1|user: w4 m\n5+1|user: w5 m\n6+1|user: w6 m\n7+1|user: w7 m",
+        "4|user: w4 m\n5|user: w5 m\n6|user: w6 m\n7|user: w7 m",
         "+4 opens into its messages"
     );
     assert_eq!(
         z(0, 2).unwrap(),
-        "0+1|user: w0 m\n1+1|user: w1 m",
+        "0|user: w0 m\n1|user: w1 m",
         "+2 opens into its two messages"
     );
     assert_eq!(
@@ -459,11 +476,11 @@ fn zoom_opens_two_levels() {
     let day = format!("{}-{}-{}", &ts[..4], &ts[4..6], &ts[6..8]);
     assert_eq!(
         zoom(&snap, 0, 2, Some(&meta)).unwrap().unwrap(),
-        format!("0+1|{day}|user|-|user: w0 m\n1+1|{day}|user|-|user: w1 m")
+        format!("{day}\n0|user|-|user: w0 m\n1|user|-|user: w1 m")
     );
     assert_eq!(
         zoom(&snap, 16, 1, Some(&Meta::default())).unwrap().unwrap(),
-        format!("16+0|{day}|ai: {}", long(16))
+        format!("{day}\n16|ai: {}", long(16))
     );
 }
 
@@ -612,7 +629,7 @@ fn failures_are_retried_and_reported_once() {
         Ok(())
     })
     .unwrap();
-    assert_eq!(reports, ["0+1: overloaded"]);
+    assert_eq!(reports, ["0: overloaded"]);
     assert_eq!(fake.calls.load(Ordering::SeqCst), 4);
     assert_eq!(c.mem().text(Coord::leaf(0)), Some("a summary"));
     let blanks = AtomicUsize::new(0);
@@ -624,7 +641,7 @@ fn failures_are_retried_and_reported_once() {
     drop(c);
     let mut c = compactor(&s, &empty, opts(VIEW, 8));
     c.run(|_| Ok(())).unwrap();
-    assert_eq!(c.take_reports(), ["1+1: empty reply"]);
+    assert_eq!(c.take_reports(), ["1: empty reply"]);
 }
 
 #[test]
@@ -663,7 +680,7 @@ fn a_nap_on_a_dead_backend_gives_up_and_frees_the_lock() {
     assert_eq!(r.code, 1, "{}", r.stderr);
     let failed = |n| {
         format!(
-            "Failed {n}+1: usage limit reached. Retrying up to 3 times, waiting longer each time.\n"
+            "Failed {n}: usage limit reached. Retrying up to 3 times, waiting longer each time.\n"
         )
     };
     assert!(
@@ -672,7 +689,7 @@ fn a_nap_on_a_dead_backend_gives_up_and_frees_the_lock() {
         r.stdout
     );
     assert!(
-        Regex::new(r"\nGave up on [01]\+1 after 4 failures in a row: usage limit reached\. It stays pending; the nap after the next note tries again\.\n$")
+        Regex::new(r"\nGave up on [01] after 4 failures in a row: usage limit reached\. It stays pending; the nap after the next note tries again\.\n$")
             .unwrap()
             .is_match(&r.stdout),
         "{}",
@@ -682,7 +699,7 @@ fn a_nap_on_a_dead_backend_gives_up_and_frees_the_lock() {
     let errors: Vec<&str> = log.lines().filter(|l| l.contains(" ERROR ")).collect();
     assert_eq!(errors.len(), 1, "{log}");
     assert!(
-        Regex::new(r#": gave up node=[01]\+1 tries=4 error="usage limit reached"$"#)
+        Regex::new(r#": gave up node=[01] tries=4 error="usage limit reached"$"#)
             .unwrap()
             .is_match(errors[0]),
         "{log}"
@@ -711,15 +728,11 @@ fn a_life_through_the_cli() {
         .collect();
     fs::write(&seed, lines).unwrap();
     let r = run(d, &["import", seed.to_str().unwrap()]);
-    assert_eq!(
-        r.stdout, "Imported 40 notes, 0+1 to 39+1.\n",
-        "{}",
-        r.stderr
-    );
+    assert_eq!(r.stdout, "Imported 40 notes, 0 to 39.\n", "{}", r.stderr);
     let r = run(d, &["note", "a short one"]);
-    assert_eq!(r.stdout, "Saved as 40+1.\n");
+    assert_eq!(r.stdout, "Saved as 40.\n");
     let r = run(d, &["note", &format!("big {}", "b".repeat(270))]);
-    assert_eq!(r.stdout, "Saved as 41+1.\n");
+    assert_eq!(r.stdout, "Saved as 41.\n");
 
     let wake = run(d, &["wake"]).stdout;
     let ts = Store::open(d).unwrap().snapshot().unwrap().message(40).unwrap().ts;
@@ -727,12 +740,21 @@ fn a_life_through_the_cli() {
         format!("{}-{}-{}", &ts[..4], &ts[4..6], &ts[6..8]),
         format!("{}:{}", &ts[9..11], &ts[11..13]),
     );
-    assert!(wake.starts_with("0+1|2020-01-01|message 0 nnn"), "{wake}");
-    assert!(wake.contains(&format!("\n40+1|{today}|a short one\n")), "{wake}");
+    assert!(wake.starts_with("2020-01-01\n0|message 0 nnn"), "{wake}");
+    assert!(
+        wake.contains(&format!("\n{today}\n40|a short one\n")),
+        "{wake}"
+    );
     let wake = run(d, &["wake", "--time", "-o", "kind,repo"]).stdout;
-    assert!(wake.starts_with("0+1|2020-01-01 00:00|note|-|message 0 nnn"), "{wake}");
-    assert!(wake.contains(&format!("\n40+1|{today} {now}|note|")), "{wake}");
-    assert!(wake.ends_with("\nYou are awake.\n"));
+    assert!(
+        wake.starts_with("2020-01-01\n0|00:00|note|-|message 0 nnn"),
+        "{wake}"
+    );
+    assert!(
+        wake.contains(&format!("\n{today}\n40|{now}|note|")),
+        "{wake}"
+    );
+    assert!(wake.ends_with(&format!("\n{AWAKE}\n")), "{wake}");
 
     let rt = runtime(Arc::new(Model(Arc::new(Fake::summaries()))));
     let r = run_rt(d, &rt, &["nap"]);
@@ -759,66 +781,91 @@ fn a_life_through_the_cli() {
 
     assert_eq!(run(d, &["config", "WAKE_LINES=8"]).code, 0);
     let wake = run(d, &["wake"]).stdout;
-    let ids: Vec<(u64, u64)> = wake
-        .lines()
-        .filter_map(|l| Coord::parse(l.split_once('|')?.0))
-        .collect();
+    let ids = line_ids(&wake);
     assert_eq!(ids.len(), 8, "{wake}");
     assert!(ids[0].0 == 0 && ids[0].1 > 1, "the oldest are summarized: {wake}");
     assert!(ids.windows(2).all(|w| w[0].0 + w[0].1 == w[1].0), "{wake}");
     assert_eq!(ids[7].0 + ids[7].1, 42, "{wake}");
+    let straddled = ids.iter().find(|(id, n)| *id < 5 && id + n > 5).unwrap();
+    let resumed = run(d, &["wake", "5"]).stdout;
+    let rids = line_ids(&resumed);
+    assert_eq!(rids[0].0, 5, "a resumed read starts at its id: {resumed}");
+    assert!(
+        rids.iter()
+            .take_while(|(id, _)| *id < straddled.0 + straddled.1)
+            .all(|(_, n)| *n < straddled.1),
+        "the block over it is split: {resumed}"
+    );
+    assert!(tiles(&rids, 5, 42), "{resumed}");
+    assert!(
+        resumed.starts_with("Your memory comes in parts"),
+        "{resumed}"
+    );
     assert_eq!(run(d, &["config", "WAKE_LINES="]).code, 0);
 
     assert_eq!(run(d, &["config", "PART_CHARS=600"]).code, 0);
-    let first = run(d, &["wake"]).stdout;
-    assert!(first.starts_with("Your memory, part 1 of "), "{first}");
-    let pin = Regex::new(r"Not awake yet\. Run: ai memory wake 2 ([0-9a-f]{40})\n$")
-        .unwrap()
-        .captures(&first)
-        .unwrap_or_else(|| panic!("{first}"))[1]
-        .to_string();
-    run(d, &["note", "lands between two parts"]);
-    let mut all = Vec::new();
-    for k in 1.. {
-        let r = run(d, &["wake", &k.to_string(), &pin]);
+    let next = Regex::new(r"\nNot awake yet\. Run: ai memory wake (\d+)\n$").unwrap();
+    let (mut from, mut all) = (0, Vec::new());
+    for k in 0.. {
+        let r = run(d, &["wake", &from.to_string()]);
         assert_eq!(r.code, 0, "{}", r.stderr);
-        all.extend(
-            r.stdout
-                .lines()
-                .filter(|l| l.contains('|'))
-                .map(String::from),
+        let mut lines = r.stdout.lines();
+        assert!(
+            lines
+                .next()
+                .unwrap()
+                .starts_with("Your memory comes in parts")
         );
-        if r.stdout.ends_with("You are awake.\n") {
-            break;
+        assert!(
+            is_day(lines.next().unwrap()),
+            "every part opens with a date header: {}",
+            r.stdout
+        );
+        all.extend(line_ids(&r.stdout));
+        if k == 0 {
+            run(d, &["note", "lands between two parts"]);
+        }
+        match next.captures(&r.stdout) {
+            Some(c) => from = c[1].parse().unwrap(),
+            None => {
+                assert!(r.stdout.ends_with(&format!("\n{AWAKE}\n")));
+                assert!(r.stdout.contains("\n42|lands between two parts\n"));
+                break;
+            }
         }
     }
-    assert!(!all.iter().any(|l| l.contains("lands between")));
-    assert!(all.last().unwrap().starts_with("41+1|"));
-    assert!(
-        run(d, &["wake", "1", "deadbeef"])
-            .stderr
-            .contains("not a commit")
-    );
+    assert!(tiles(&all, 0, 43), "parts tile the log: {all:?}");
+    assert!(run(d, &["wake", "43"]).stderr.contains("No message 43"));
     assert_eq!(run(d, &["config", "PART_CHARS="]).code, 0);
 
     let z = run(d, &["zoom", "0+32"]).stdout;
-    assert_eq!(z.lines().count(), 4, "{z}");
+    assert_eq!(z.lines().filter(|l| l.contains('|')).count(), 4, "{z}");
     assert!(
-        z.starts_with("0+8|2020-01-01..01-04|") && z.contains("\n24+8|2020-01-13..01-16|"),
+        z.starts_with("2020-01-01\n0+8|..01-04|") && z.contains("\n2020-01-13\n24+8|..01-16|"),
         "{z}"
     );
     assert!(
         run(d, &["zoom", "3"])
             .stdout
-            .starts_with("3+0|2020-01-02|message 3 n")
+            .starts_with("2020-01-02\n3|message 3 n")
     );
+    let leaves = run(d, &["zoom", "0+4"]).stdout;
+    for l in leaves.lines().filter(|l| l.contains('|')) {
+        let id = l.split_once('|').unwrap().0;
+        assert!(!id.contains('+'), "one message prints a bare id: {l}");
+        let z = run(d, &["zoom", id]).stdout;
+        assert!(
+            z.lines().nth(1).unwrap().starts_with(&format!("{id}|")),
+            "{z}"
+        );
+    }
     let z = run(d, &["zoom", "32+8", "-o", "repo"]).stdout;
-    assert_eq!(z.lines().count(), 4, "{z}");
-    assert!(z.starts_with("32+2|2020-01-17|-|"), "{z}");
-    assert!(z.contains("\n38+2|2020-01-20|-|"), "{z}");
+    assert_eq!(z.lines().filter(|l| l.contains('|')).count(), 4, "{z}");
+    assert!(z.starts_with("2020-01-17\n32+2|-|"), "{z}");
+    assert!(z.contains("\n2020-01-20\n38+2|-|"), "{z}");
     assert_eq!(run(d, &["zoom", "0+64"]).stderr, "No line 0+64.");
     assert_eq!(run(d, &["zoom", "1+2"]).stderr, "No line 1+2.");
-    assert!(run(d, &["zoom", "x"]).stderr.contains("not an id+n"));
+    assert!(run(d, &["zoom", "x"]).stderr.contains("not a line id"));
     let whole = run(d, &["zoom", "3"]).stdout;
     assert!(whole.len() > 40, "{whole}");
     assert_eq!(run(d, &["config", "PART_CHARS=10"]).code, 0);
@@ -826,7 +873,7 @@ fn a_life_through_the_cli() {
     for k in 1.. {
         let p = run(d, &["zoom", "3", &k.to_string()]).stdout;
         let next = Regex::new(&format!(
-            r"\nPart {k} of \d+\. Next: ai memory zoom 3\+1 {}\n$",
+            r"\nPart {k} of \d+\. Next: ai memory zoom 3 {}\n$",
             k + 1
         ))
         .unwrap();
@@ -843,8 +890,8 @@ fn a_life_through_the_cli() {
     assert_eq!(run(d, &["config", "PART_CHARS="]).code, 0);
 
     let origin = Store::open(d).unwrap().origin().to_string();
-    let show = run(d, &["show", "40+1"]).stdout;
-    assert!(show.starts_with("40+1\nts      "));
+    let show = run(d, &["show", "40"]).stdout;
+    assert!(show.starts_with("40\nts      "));
     assert!(show.contains("\nkind    note\n") && show.contains("\ntext    a short one\n"));
     assert!(show.contains(&format!("\nkind    note\norigin  {origin}\nrepo    ")));
     let show = run(d, &["show", "0+2"]).stdout;
@@ -857,9 +904,7 @@ fn a_life_through_the_cli() {
 
     let g = run(d, &["grep", "message 3\\b", "--time", "-o", "origin,repo"]).stdout;
     assert!(
-        g.starts_with(&format!(
-            "3+1|2020-01-02 00:00|{origin}|-|message 3 nnn"
-        )),
+        g.starts_with(&format!("2020-01-02\n3|00:00|{origin}|-|message 3 nnn")),
         "{g}"
     );
     let n = |args: &[&str]| run(d, args).stdout;
@@ -905,15 +950,19 @@ fn a_life_through_the_cli() {
     let footer = g.lines().last().unwrap();
     assert_eq!(
         footer,
-        "Newest 5 of 40. Older: ai memory grep 'message' -m 5 --before 35+1"
+        "Newest 5 of 40. Older: ai memory grep 'message' -m 5 --before 35"
     );
-    let g = run(d, &["grep", "message", "-m", "1", "--time", "-o", "repo,kind"]).stdout;
+    let g = run(
+        d,
+        &["grep", "message", "-m", "1", "--time", "-o", "repo,kind"],
+    )
+    .stdout;
     assert_eq!(
         g.lines().last().unwrap(),
-        "Newest 1 of 40. Older: ai memory grep 'message' -m 1 --time -o repo,kind --before 39+1"
+        "Newest 1 of 40. Older: ai memory grep 'message' -m 1 --time -o repo,kind --before 39"
     );
     let g = run(d, &["grep", "big"]).stdout;
-    assert!(g.starts_with(&format!("41+1|{today}|big bbb")), "{g}");
+    assert!(g.starts_with(&format!("{today}\n41|big bbb")), "{g}");
     assert_eq!(run(d, &["grep", "^"]).code, 0);
 
     let bad = tmp.path().join("bad.txt");
@@ -1008,7 +1057,10 @@ fn the_log_is_in_time_order() {
     let Err(e) = s.append("t", &[at("20200101T000000Z")]) else {
         panic!("an earlier ts was appended");
     };
-    assert!(e.to_string().contains("2020-01-01 00:00 cannot follow"), "{e}");
+    assert!(
+        e.to_string().contains("2020-01-01 00:00 cannot follow"),
+        "{e}"
+    );
     s.append("t", &[at("29990101T000000Z"), msg(Kind::Note, "late")])
         .unwrap();
     let snap = s.snapshot().unwrap();
@@ -1082,8 +1134,8 @@ fn a_nap_logs_timestamped_events_to_nap_log() {
     let log = fs::read_to_string(d.join("nap.log")).unwrap();
     for event in [
         "start",
-        r"built node=0\+1 bytes=300 secs=[\d.]+",
-        r"built node=1\+1 bytes=300 secs=[\d.]+",
+        r"built node=0 bytes=300 secs=[\d.]+",
+        r"built node=1 bytes=300 secs=[\d.]+",
         r"built node=0\+2 bytes=300 secs=[\d.]+",
         r"end built=3 secs=[\d.]+",
     ] {
@@ -1103,8 +1155,8 @@ fn a_nap_logs_timestamped_events_to_nap_log() {
     assert!(r.stdout.ends_with("Built 1 summary.\n"), "{}", r.stdout);
     let log = fs::read_to_string(d.join("nap.log")).unwrap();
     let warns = [
-        r#"failed node=2\+1 error="overloaded" secs=[\d.]+ wait=[\d.]+"#,
-        r"over limit node=2\+1 bytes=600 attempt=1",
+        r#"failed node=2 error="overloaded" secs=[\d.]+ wait=[\d.]+"#,
+        r"over limit node=2 bytes=600 attempt=1",
     ];
     for event in warns {
         assert!(line("WARN", event).is_match(&log), "{event}:\n{log}");

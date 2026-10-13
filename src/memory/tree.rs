@@ -2,7 +2,7 @@ use std::fmt;
 
 pub const NODE: usize = 512;
 
-/// Node `(l, i)`: messages `[i·2^l, (i+1)·2^l)`, printed `id+n`.
+/// Node `(l, i)`: messages `[i·2^l, (i+1)·2^l)`, printed `id+n`, a leaf as a bare `id`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Coord {
     pub l: u32,
@@ -60,7 +60,10 @@ impl Coord {
 
 impl fmt::Display for Coord {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}+{}", self.id(), self.n())
+        match self.l {
+            0 => write!(f, "{}", self.i),
+            _ => write!(f, "{}+{}", self.id(), self.n()),
+        }
     }
 }
 
@@ -93,6 +96,7 @@ mod tests {
         assert_eq!(Coord::at(6, 3, 9999), None);
         assert_eq!(Coord::at(6, 0, 9999), None);
         assert_eq!(Coord::at(7, 1, 8), Some(Coord::leaf(7)));
+        assert_eq!(Coord::leaf(7).to_string(), "7");
         assert_eq!(c.children(), [Coord::new(2, 546), Coord::new(2, 547)]);
         assert_eq!(c.parent(), Coord::new(4, 136));
         assert_eq!(Coord::parse("2184+8"), Some((2184, 8)));

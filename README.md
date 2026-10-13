@@ -22,7 +22,7 @@ nix profile add github:hatimthayyil/ai-tools
 ai memory init                  # create the memory; prints the block for your agent instructions
 ai memory wake                  # read the memory
 ai memory note "what happened"  # record one line
-ai memory zoom <id+n>           # open a line of the view
+ai memory zoom <id>             # open a line of the view
 ai memory grep <regex>          # search every message
 ```
 

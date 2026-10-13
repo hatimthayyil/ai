@@ -7,7 +7,7 @@ use regex::{Regex, RegexBuilder};
 use crate::memory::{
     cli::{line_id, plural},
     config::Knob,
-    meta::Meta,
+    meta::{Line, Meta},
     record::{Kind, Message, Who, flat, midnight},
     store::{ME, Snapshot},
     tree::Coord,
@@ -123,12 +123,11 @@ fn excerpt(text: &str, pat: Option<&Regex>) -> String {
     format!("{pre}{}{post}", &text[lo..hi])
 }
 
-fn detail(i: u64, m: &Message, meta: &Meta, pat: Option<&Regex>) -> String {
-    format!(
-        "{}|{}{}",
+fn detail(i: u64, m: &Message, meta: &Meta, pat: Option<&Regex>) -> Line {
+    meta.line(
         Coord::leaf(i),
-        meta.head(std::slice::from_ref(m)),
-        excerpt(&m.label(), pat)
+        std::slice::from_ref(m),
+        &excerpt(&m.label(), pat),
     )
 }
 
@@ -224,13 +223,23 @@ impl Grep {
 struct Unit {
     line: Coord,
     span: Option<(u64, u64)>,
-    lines: Vec<String>,
+    lines: Vec<Line>,
     size: u64,
 }
 
+/// Bytes `l` adds after `prev`, counting its date header when the day changes.
+fn cost(prev: Option<&Line>, l: &Line) -> u64 {
+    l.size(prev.is_none_or(|p| p.day != l.day))
+}
+
 impl Unit {
-    fn new(line: Coord, span: Option<(u64, u64)>, lines: Vec<String>) -> Unit {
-        let size = lines.iter().map(|l| l.len() as u64 + 1).sum();
+    /// `size` counts a header before the first line: at most one more than printed.
+    fn new(line: Coord, span: Option<(u64, u64)>, lines: Vec<Line>) -> Unit {
+        let size = lines
+            .iter()
+            .enumerate()
+            .map(|(k, l)| cost(k.checked_sub(1).map(|p| &lines[p]), l))
+            .sum();
         Unit {
             line,
             span,
@@ -273,13 +282,14 @@ impl Page {
         self.trim();
     }
 
-    fn extend(&mut self, i: u64, line: String) {
+    fn extend(&mut self, i: u64, line: Line) {
         let Some(u) = self.units.back_mut() else {
             return;
         };
         u.span = u.span.map(|(lo, _)| (lo, i + 1));
-        u.size += line.len() as u64 + 1;
-        self.size += line.len() as u64 + 1;
+        let n = cost(u.lines.last(), &line);
+        u.size += n;
+        self.size += n;
         u.lines.push(line);
         self.trim();
     }
@@ -342,7 +352,7 @@ pub fn grep(s: &Snapshot, out: &mut dyn Write, g: &Grep) -> Result<ExitCode> {
             if below(key(c)) && g.admits(&since, &n.ts, &n.origin, &n.who) && pat.is_match(&n.text)
             {
                 hits += 1;
-                let line = format!("{c}|{}{}", g.meta.head_at(s, c)?, n.text);
+                let line = g.meta.line_at(s, c, &n.text)?;
                 page.push(Unit::new(c, None, vec![line]));
             }
         }
@@ -366,13 +376,19 @@ pub fn grep(s: &Snapshot, out: &mut dyn Write, g: &Grep) -> Result<ExitCode> {
         page.push(u);
     }
 
-    let mut prev = None;
+    let (mut prev, mut last) = (None, None);
     for (k, u) in page.units.iter().enumerate() {
         let joined = prev.is_some_and(|e| u.span.is_some_and(|(lo, _)| lo == e));
         if g.context > 0 && k > 0 && !joined {
             writeln!(out, "--")?;
         }
-        writeln!(out, "{}", u.lines.join("\n"))?;
+        for l in &u.lines {
+            if last.is_none_or(|p: &Line| p.day != l.day) {
+                writeln!(out, "{}", l.day)?;
+            }
+            writeln!(out, "{}", l.text)?;
+            last = Some(l);
+        }
         prev = u.span.map(|(_, hi)| hi);
     }
     let shown = page.units.len() as u64;

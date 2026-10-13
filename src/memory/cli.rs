@@ -17,11 +17,11 @@ use crate::memory::{
     claude::{self, ClaudeCode},
     compact::{Compactor, GaveUp, Options},
     config::Knob,
-    cover::cover,
+    cover::{self, cover},
     grep::{Grep, grep},
     hook::{REMINDED, hook},
     log,
-    meta::Meta,
+    meta::{Line, Meta, dated, parts},
     prov,
     record::{Kind, Message, Place, Who, midnight},
     stats::{Stats, stats},
@@ -65,20 +65,23 @@ Never edit or delete anything under `{data}`: the tool manages it.
 ### Reading it: the view, zoom, grep
 
 `wake` prints the view: the whole memory in a fixed number of one-line
-summaries, oldest first. Each line is `id+n|dates|text`: the n messages
-from id on, and the UTC days they span (`2026-10-04..10-05`). A short
-message is its own line, word for word; the older the messages, the
-more a line covers. Notes (what sessions like this one noted) are bare
-text; a chat with the user is tagged by speaker, `user:` and `ai:`.
+summaries, oldest first, under UTC date headers (`2026-10-11`). A line
+is `id|text` for message id, or `id+n|text` for the n messages from id
+on; one that runs past its header's day shows its last day,
+`256+8|..10-12|text`. A short message is its own line, word for word;
+the older the messages, the more a line covers. Notes (what sessions
+like this one noted) are bare text; a chat with the user is tagged by
+speaker, `user:` and `ai:`. A long view comes in parts: run the
+`{memo} wake <id>` each part ends with until it says you are awake.
 
 `{memo} zoom <id+n>` opens a line two levels down: the four lines of n/4
-it was made from, or its messages when n is 2 or 4; `{memo} zoom <id>+1`
+it was made from, or its messages when n is 2 or 4; `{memo} zoom <id>`
 gives message id in full. Zoom whenever a line
 only mentions something you need, before you act, guess or ask.
 `{memo} grep <regex>` searches every message, word for word; `-t` adds
 the summaries, `--help` lists the filters. `wake`, `zoom` and `grep`
 take `--time` for the time of day and `-o repo,branch,...` for more
-fields. `{memo} show <id+n>` prints where a message or summary came
+fields. `{memo} show <id>` prints where a message or summary came
 from.
 
 ### If you're a subagent: skip everything above
@@ -105,9 +108,8 @@ enum Command {
     Init,
     #[command(about = "read your memory: print the view. Run first, every session.")]
     Wake {
-        part: Option<u64>,
-        #[arg(help = "the commit a multi-part read is pinned to, as printed")]
-        commit: Option<String>,
+        #[arg(help = "the message to read on from, as printed")]
+        from: Option<u64>,
         #[command(flatten)]
         meta: Meta,
     },
@@ -122,7 +124,7 @@ enum Command {
     Grep(Grep),
     #[command(about = "open a line of the view into the four lines two levels under it.")]
     Zoom {
-        #[arg(help = "a line's id+n, as printed: 2184+8, or 7+1 for message 7")]
+        #[arg(help = "a line's id, as printed: 2184+8, or 7 for message 7")]
         id: String,
         #[arg(help = "the part of a long message to show, as printed")]
         part: Option<u64>,
@@ -131,7 +133,7 @@ enum Command {
     },
     #[command(about = "show where one message or summary came from.")]
     Show {
-        #[arg(help = "a line's id+n, as printed: 2184+8, or 7+1 for message 7")]
+        #[arg(help = "a line's id, as printed: 2184+8, or 7 for message 7")]
         id: String,
     },
     #[command(about = "show this memory's sizes, or change one.")]
@@ -143,7 +145,9 @@ enum Command {
     Import { file: PathBuf },
     #[command(about = "count how often agents wake, note, zoom, grep and show.")]
     Stats(Stats),
-    #[command(about = "the prompt hook for agent harnesses: a memory reminder on long prompts and every few short ones.")]
+    #[command(
+        about = "the prompt hook for agent harnesses: a memory reminder on long prompts and every few short ones."
+    )]
     Hook,
 }
 
@@ -153,18 +157,9 @@ impl Command {
         let part = |p: &Option<u64>| p.map(|p| p.to_string());
         match self {
             Command::Init => ("init", Vec::new()),
-            Command::Wake {
-                part: p,
-                commit,
-                meta,
-            } => (
-                "wake",
-                part(p)
-                    .into_iter()
-                    .chain(commit.clone())
-                    .chain(meta.args())
-                    .collect(),
-            ),
+            Command::Wake { from, meta } => {
+                ("wake", part(from).into_iter().chain(meta.args()).collect())
+            }
             Command::Note { .. } => ("note", Vec::new()),
             Command::Nap => ("nap", Vec::new()),
             Command::Grep(g) => ("grep", g.typed()),
@@ -285,9 +280,7 @@ impl Command {
     ) -> Result<ExitCode> {
         match self {
             Command::Init | Command::Hook => unreachable!(),
-            Command::Wake { part, commit, meta } => {
-                wake(s, out, part.unwrap_or(1), commit.as_deref(), &meta)
-            }
+            Command::Wake { from, meta } => wake(s, out, from.unwrap_or(0), &meta),
             Command::Note { text } => note(s, out, &text, rt, place, who),
             Command::Nap => nap(s, out, rt),
             Command::Grep(g) => grep(&s.snapshot()?, out, &g),
@@ -320,12 +313,12 @@ pub fn plural(n: u64, word: &str) -> String {
     format!("{n} {word}s")
 }
 
-/// A printed `id+n` (a bare `id` is `id+1`) that names a line within `t` messages.
+/// A printed line id, `id+n` or a bare `id` for one message, that names a line within `t` messages.
 pub fn line_id(s: &str, t: u64) -> Result<Coord> {
     let Some((id, n)) = Coord::parse(s) else {
-        bail!("'{s}' is not an id+n. Copy one from the view, like 2184+8.");
+        bail!("'{s}' is not a line id. Copy one from the view, like 2184+8 or 7.");
     };
-    Coord::at(id, n, t).with_context(|| format!("No line {id}+{n}."))
+    Coord::at(id, n, t).with_context(|| format!("No line {s}."))
 }
 
 fn check(text: &str, limit: u64) -> Result<&str> {
@@ -342,27 +335,10 @@ fn check(text: &str, limit: u64) -> Result<&str> {
     let n = text.len() as u64;
     if n > limit {
         bail!(
-            "Too long: {n} bytes, limit {limit}. Accented characters cost 2 bytes. Compress it further."
+            "Too long: {n} bytes, limit {limit}. Accented characters cost 2 bytes. Compress it, or split it into separate notes."
         );
     }
     Ok(text)
-}
-
-fn paginate(lines: Vec<String>, max_lines: u64, max_chars: u64) -> Vec<Vec<String>> {
-    let (mut parts, mut cur, mut size) = (Vec::new(), Vec::new(), 0);
-    for line in lines {
-        let n = line.len() as u64 + 1;
-        if !cur.is_empty() && (cur.len() as u64 >= max_lines || size + n > max_chars) {
-            parts.push(std::mem::take(&mut cur));
-            size = 0;
-        }
-        cur.push(line);
-        size += n;
-    }
-    if !cur.is_empty() {
-        parts.push(cur);
-    }
-    parts
 }
 
 fn init(dir: &Path, out: &mut dyn Write) -> Result<ExitCode> {
@@ -390,65 +366,61 @@ fn init(dir: &Path, out: &mut dyn Write) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn wake(
-    s: &Store,
-    out: &mut dyn Write,
-    k: u64,
-    commit: Option<&str>,
-    meta: &Meta,
-) -> Result<ExitCode> {
-    let snap = match commit {
-        Some(c) => s.at(Some(s.commit_id(c)?))?,
-        None => s.snapshot()?,
-    };
+/// Printed at the top of every part of a read that takes more than one.
+const IN_PARTS: &str = "Your memory comes in parts, oldest first. Run the command at the end of each part until you see \"You are awake.\"";
+
+fn wake(s: &Store, out: &mut dyn Write, from: u64, meta: &Meta) -> Result<ExitCode> {
+    let snap = s.snapshot()?;
     let t = snap.log_len()?;
-    let Some(pin) = snap.commit().filter(|_| t > 0) else {
+    if t == 0 {
         writeln!(
             out,
             "No memories yet. Record the first with: {ME} note \"<one line>\""
         )?;
         writeln!(out, "You are awake.")?;
         return Ok(ExitCode::SUCCESS);
-    };
+    }
+    if from >= t {
+        bail!(
+            "No message {from}: the memory has {}. Run: {ME} wake",
+            plural(t, "message")
+        );
+    }
     let mut lines = Vec::new();
-    for c in cover(t, s.cfg.get(Knob::WakeLines)) {
+    for c in cover::from(&cover(t, s.cfg.get(Knob::WakeLines)), from) {
         wake_lines(&snap, c, meta, &mut lines)?;
     }
-    let parts = paginate(
+    let mut parts = parts(
         lines,
         s.cfg.get(Knob::PartLines),
         s.cfg.get(Knob::PartChars),
-    );
-    let n = parts.len() as u64;
-    if !(1..=n).contains(&k) {
-        bail!(
-            "No part {k}: the memory has {}. Run: {ME} wake",
-            plural(n, "part")
-        );
+    )
+    .into_iter();
+    let part = parts.next().unwrap_or_default();
+    let more = parts.next().is_some();
+    if from > 0 || more {
+        writeln!(out, "{IN_PARTS}")?;
     }
-    if n > 1 {
-        writeln!(
-            out,
-            "Your memory, part {k} of {n}, oldest first ({}).",
-            plural(t, "message")
-        )?;
+    for l in dated(&part) {
+        writeln!(out, "{l}")?;
     }
-    writeln!(out, "{}", parts[k as usize - 1].join("\n"))?;
-    if k < n {
-        writeln!(
+    match part.last().filter(|_| more) {
+        Some(l) => writeln!(
             out,
-            "Not awake yet. Run: {ME} wake {} {pin}{}",
-            k + 1,
+            "Not awake yet. Run: {ME} wake {}{}",
+            l.c.end(),
             meta.flags()
-        )?;
-    } else {
-        writeln!(out, "You are awake.")?;
+        )?,
+        None => writeln!(
+            out,
+            "You are awake. Zoom the marked lines that touch your task before you act."
+        )?,
     }
     Ok(ExitCode::SUCCESS)
 }
 
 /// Line `c`, or its halves' lines while its summary is not built; tool calls have none.
-fn wake_lines(snap: &Snapshot, c: Coord, meta: &Meta, out: &mut Vec<String>) -> Result<()> {
+fn wake_lines(snap: &Snapshot, c: Coord, meta: &Meta, out: &mut Vec<Line>) -> Result<()> {
     let text = match snap.node(c)? {
         Some(n) if n.text.is_empty() => return Ok(()),
         Some(n) => n.text,
@@ -460,7 +432,7 @@ fn wake_lines(snap: &Snapshot, c: Coord, meta: &Meta, out: &mut Vec<String>) -> 
             return Ok(());
         }
     };
-    out.push(format!("{c}|{}{text}", meta.head_at(snap, c)?));
+    out.push(meta.line_at(snap, c, &text)?);
     Ok(())
 }
 
@@ -479,7 +451,7 @@ fn note(
         ..Message::new(Kind::Note, text)
     };
     let (i, _, _) = s.append("note", &[m])?;
-    writeln!(out, "Saved as {i}+1.")?;
+    writeln!(out, "Saved as {i}.")?;
     if rt.nap_on_note && pending(s)? {
         spawn_nap(s.dir())?;
     }
@@ -701,7 +673,7 @@ fn import(s: &Store, out: &mut dyn Write, file: &Path) -> Result<ExitCode> {
     let k = items.len() as u64;
     writeln!(
         out,
-        "Imported {}, {base}+1 to {}+1.",
+        "Imported {}, {base} to {}.",
         plural(k, "note"),
         base + k - 1
     )?;
@@ -725,15 +697,14 @@ mod tests {
         assert_eq!(line_id("16+16", 32).unwrap(), Coord::new(4, 1));
         assert_eq!(line_id("7", 8).unwrap(), Coord::leaf(7));
         assert_eq!(line_id("7+1", 8).unwrap(), Coord::leaf(7));
-        for bad in ["16+16", "3+2", "4+3", "x", "#7", "7-8", "31+1"] {
+        for bad in ["16+16", "3+2", "4+3", "x", "#7", "7-8", "31+1", "31"] {
             assert!(line_id(bad, 31).is_err(), "{bad}");
         }
-    }
-
-    #[test]
-    fn pages_respect_both_caps() {
-        let lines: Vec<_> = (0..10).map(|i| format!("line {i}")).collect();
-        assert_eq!(paginate(lines.clone(), 3, 1000).len(), 4);
-        assert_eq!(paginate(lines, 100, 14).len(), 10 / 2);
+        let c = Coord::leaf(7);
+        assert_eq!(
+            line_id(&c.to_string(), 8).unwrap(),
+            c,
+            "a printed id reads back"
+        );
     }
 }

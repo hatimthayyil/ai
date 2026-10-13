@@ -69,23 +69,29 @@ fn time(ts: &str) -> String {
     format!("{}:{}", &ts[9..11], &ts[11..13])
 }
 
-/// `a..b`, UTC: `2026-10-04..10-05`, one day as `2026-10-08`; with `time`,
-/// `2026-10-08 09:12..17:40`. The end drops what it shares with the start, down to the date.
-pub fn span(a: &str, b: &str, time_of_day: bool) -> String {
-    let at = |ts: &str| match time_of_day {
-        true => format!("{} {}", date(ts), time(ts)),
-        false => date(ts),
+/// `2026-10-08 09:12`, UTC.
+pub fn stamp(ts: &str) -> String {
+    format!("{} {}", date(ts), time(ts))
+}
+
+/// What a line shows of `a..b` under the header of `a`'s day, UTC: nothing within the day,
+/// else `..10-05`; with `time`, `09:12`, `09:12..17:40` or `09:12..10-05 17:40`. The end
+/// drops the year it shares with the start.
+pub fn range(a: &str, b: &str, time_of_day: bool) -> Option<String> {
+    let same_day = a[..8] == b[..8];
+    let day = match a[..4] == b[..4] {
+        true => date(b)[5..].to_string(),
+        false => date(b),
     };
-    let (from, to) = (at(a), at(b));
-    if from == to {
-        return from;
+    if !time_of_day {
+        return (!same_day).then(|| format!("..{day}"));
     }
-    let end = match (a[..4] == b[..4], a[..8] == b[..8] && time_of_day) {
-        (_, true) => time(b),
-        (true, _) => to[5..].to_string(),
-        _ => to,
-    };
-    format!("{from}..{end}")
+    let (from, to) = (time(a), time(b));
+    Some(match (same_day, from == to) {
+        (true, true) => from,
+        (true, false) => format!("{from}..{to}"),
+        (false, _) => format!("{from}..{day} {to}"),
+    })
 }
 
 /// The one value, else the commonest (a real one before `-`, the earliest of a tie) and
@@ -105,24 +111,82 @@ fn values<'a>(vs: impl Iterator<Item = &'a str>) -> String {
     }
 }
 
-impl Meta {
-    /// `dates|field|…|` of `ms`, the messages a line covers, in order. Only the first and
-    /// last are read for the dates: the log is in time order.
-    pub fn head(&self, ms: &[Message]) -> String {
-        let (Some(a), Some(b)) = (ms.first(), ms.last()) else {
-            return String::new();
-        };
-        let mut s = span(&a.ts, &b.ts, self.time);
-        for f in &self.fields {
-            s.push('|');
-            s += &values(ms.iter().map(|m| f.of(m)));
+/// A printed line `id+n|range|field|…|text`, under the header of `day`, the day it starts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Line {
+    pub c: Coord,
+    pub day: String,
+    pub text: String,
+}
+
+impl Line {
+    /// Bytes printed for it, its day's header too when `header`.
+    pub fn size(&self, header: bool) -> u64 {
+        let h = if header { self.day.len() + 1 } else { 0 };
+        (self.text.len() + 1 + h) as u64
+    }
+}
+
+/// `lines` with a date header before the first and wherever the day changes.
+pub fn dated(lines: &[Line]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut day = None;
+    for l in lines {
+        if day != Some(&l.day) {
+            out.push(l.day.clone());
+            day = Some(&l.day);
         }
-        s.push('|');
-        s
+        out.push(l.text.clone());
+    }
+    out
+}
+
+/// `lines` in parts of at most `max_lines` lines and `max_chars` bytes as [`dated`] prints
+/// them, each part starting with its header; a part holds at least one line.
+pub fn parts(lines: Vec<Line>, max_lines: u64, max_chars: u64) -> Vec<Vec<Line>> {
+    let (mut parts, mut cur): (Vec<Vec<Line>>, Vec<Line>) = (Vec::new(), Vec::new());
+    let (mut count, mut size) = (0, 0);
+    for l in lines {
+        let header = cur.last().is_none_or(|p: &Line| p.day != l.day);
+        let (n, b) = (1 + u64::from(header), l.size(header));
+        if !cur.is_empty() && (count + n > max_lines || size + b > max_chars) {
+            parts.push(std::mem::take(&mut cur));
+            (count, size) = (2, l.size(true));
+        } else {
+            (count, size) = (count + n, size + b);
+        }
+        cur.push(l);
+    }
+    if !cur.is_empty() {
+        parts.push(cur);
+    }
+    parts
+}
+
+impl Meta {
+    /// Line `c` showing `text`, over `ms`, the messages it covers in order. Only the first
+    /// and last are read for the dates: the log is in time order.
+    pub fn line(&self, c: Coord, ms: &[Message], text: &str) -> Line {
+        let (a, b) = (&ms[0], &ms[ms.len() - 1]);
+        let mut s = format!("{c}|");
+        let fields = self
+            .fields
+            .iter()
+            .map(|f| values(ms.iter().map(|m| f.of(m))));
+        for col in range(&a.ts, &b.ts, self.time).into_iter().chain(fields) {
+            s += &col;
+            s.push('|');
+        }
+        s += text;
+        Line {
+            c,
+            day: date(&a.ts),
+            text: s,
+        }
     }
 
-    /// [`Meta::head`] of line `c`, reading only the messages it needs.
-    pub fn head_at(&self, s: &Snapshot, c: Coord) -> Result<String> {
+    /// [`Meta::line`] of `c`, reading only the messages it needs.
+    pub fn line_at(&self, s: &Snapshot, c: Coord, text: &str) -> Result<Line> {
         let mut ids: Vec<u64> = match self.fields.is_empty() {
             true => vec![c.id(), c.end() - 1],
             false => (c.id()..c.end()).collect(),
@@ -132,7 +196,7 @@ impl Meta {
             .into_iter()
             .map(|i| s.message(i))
             .collect::<Result<Vec<_>>>()?;
-        Ok(self.head(&ms))
+        Ok(self.line(c, &ms, text))
     }
 
     /// The flags that ask for this, as typed.
@@ -159,25 +223,59 @@ mod tests {
     use super::*;
 
     #[test]
-    fn spans_drop_what_the_end_shares() {
+    fn ranges_show_what_the_header_does_not() {
         let (a, b) = ("20261004T091200Z", "20261005T174000Z");
-        assert_eq!(span(a, b, false), "2026-10-04..10-05");
-        assert_eq!(span(a, b, true), "2026-10-04 09:12..10-05 17:40");
-        assert_eq!(span(a, "20261004T235959Z", false), "2026-10-04");
-        assert_eq!(span(a, "20261004T174000Z", true), "2026-10-04 09:12..17:40");
-        assert_eq!(span(a, "20261004T091259Z", true), "2026-10-04 09:12");
+        assert_eq!(range(a, b, false).as_deref(), Some("..10-05"));
+        assert_eq!(range(a, b, true).as_deref(), Some("09:12..10-05 17:40"));
+        assert_eq!(range(a, "20261004T235959Z", false), None);
         assert_eq!(
-            span("20251230T000000Z", "20260102T000000Z", false),
-            "2025-12-30..2026-01-02"
+            range(a, "20261004T174000Z", true).as_deref(),
+            Some("09:12..17:40")
+        );
+        assert_eq!(range(a, "20261004T091259Z", true).as_deref(), Some("09:12"));
+        assert_eq!(
+            range("20251230T000000Z", "20260102T000000Z", false).as_deref(),
+            Some("..2026-01-02")
         );
         assert_eq!(
-            span("20260930T235000Z", "20261001T001000Z", true),
-            "2026-09-30 23:50..10-01 00:10"
+            range("20251231T235000Z", "20260101T001000Z", true).as_deref(),
+            Some("23:50..2026-01-01 00:10")
         );
+    }
+
+    fn line(c: Coord, day: &str) -> Line {
+        Line {
+            c,
+            day: day.into(),
+            text: format!("{c}|x"),
+        }
+    }
+
+    #[test]
+    fn headers_mark_each_new_day_and_open_every_part() {
+        let (a, b) = ("2026-10-04", "2026-10-05");
+        let ls = vec![
+            line(Coord::new(3, 0), a),
+            line(Coord::leaf(8), a),
+            line(Coord::leaf(9), b),
+            line(Coord::leaf(10), b),
+        ];
+        assert_eq!(dated(&ls), [a, "0+8|x", "8|x", b, "9|x", "10|x"]);
+        let ps = parts(ls.clone(), 4, 1000);
+        assert_eq!(ps, [ls[..2].to_vec(), ls[2..].to_vec()]);
+        let ps = parts(ls.clone(), 2, 1000);
+        assert_eq!(ps.len(), 4);
         assert_eq!(
-            span("20251231T235000Z", "20260101T001000Z", true),
-            "2025-12-31 23:50..2026-01-01 00:10"
+            dated(&ps[1]),
+            [a, "8|x"],
+            "a continuation repeats its header"
         );
+        let bytes = |p: &[Line]| dated(p).iter().map(|l| l.len() as u64 + 1).sum::<u64>();
+        for max in [17, 23, 40] {
+            for p in parts(ls.clone(), 100, max) {
+                assert!(p.len() == 1 || bytes(&p) <= max, "{max}: {p:?}");
+            }
+        }
     }
 
     #[test]

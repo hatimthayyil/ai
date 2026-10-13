@@ -2,6 +2,7 @@ The view: the whole chat between ai and the user, oldest first, inside
 <chat> tags, as one-line summaries. Each line is
 
   id+n|text   the n messages from id on, summarized (newlines shown as spaces)
+  id|text     the same, for message id alone
 
 A summary tags each item with its kind: user (the user's words), ai
 (ai's replies), note (notes recorded by other agent sessions), or
