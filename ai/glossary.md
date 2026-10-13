@@ -31,3 +31,8 @@
 - `format`: the store's format number, the `format` blob at the tree root (absent: 1). This ai reads and writes only its own (`FORMAT`); it refuses a newer store and upgrades an older one.
 - `upgrade`: the pure, automatic rewrite of an older-format store to `FORMAT`, one commit `upgrade format N -> M` on the old head under the compactor's lock; the old head is the rollback.
 - `root`: a note's repo identity: the first commit of the repo's default branch, cached per clone as `ai.root` in its git config.
+- `notes`: the store `ai notes` manages: a global knowledge base agents consult deliberately, never loaded at session start. A non-bare repo of Markdown files at `~/.ai/notes` (override `AI_NOTES_DIR`), one commit per change.
+- `topic`: a directory of the notes, named by its slug path with dots (`linguistics.syntax`); repo knowledge goes under `projects.<repo>`.
+- `leaf`: one note of the notes: one claim, ≤ 1024 bytes, file `<id>---<slug>.md`; the id is its UTC Denote timestamp, permanent. Frontmatter: `source`, `confidence` (`verified | reported | speculative | assessment`), `checked`, `decay`, `links`, `supersedes`, `invalid_at`.
+- `scope`, `gist`: the two parts of a topic's `_summary.md`: one line on what lies below, and its key claims. Written by the compactor model from the topic's children; out of date when the hash of that input changes.
+- `breadcrumb`: a topic path as `ai notes grep` prints it: `physics › qm › decoherence`.

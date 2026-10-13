@@ -13,6 +13,8 @@ struct Cli {
 enum Command {
     #[command(about = "Permanent memory for AI agents.")]
     Memory(ai_tools::memory::Cli),
+    #[command(about = "A global knowledge store for AI agents.")]
+    Notes(ai_tools::notes::Cli),
     #[command(about = "An endless chat backed by permanent memory.")]
     Chat(ai_tools::chat::Cli),
 }
@@ -20,6 +22,7 @@ enum Command {
 fn main() -> ExitCode {
     let result = match Cli::parse().command {
         Command::Memory(cli) => cli.exec(),
+        Command::Notes(cli) => cli.exec(),
         Command::Chat(cli) => cli.exec(),
     };
     result.unwrap_or_else(|e| {

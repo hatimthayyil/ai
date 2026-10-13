@@ -10,8 +10,9 @@ use std::{
 use ai_tools::memory::{Coord, Message, REF, Store};
 use tempfile::TempDir;
 
-const ISOLATE: [&str; 19] = [
+const ISOLATE: [&str; 20] = [
     "AI_MEMORY_DIR",
+    "AI_NOTES_DIR",
     "CLAUDE_CONFIG_DIR",
     "CODEX_HOME",
     "AI_AGENT",
@@ -60,7 +61,7 @@ impl Sandbox {
         for k in ISOLATE {
             c.env_remove(k);
         }
-        c.env("AI_MEMORY_NAP", "0");
+        c.env("AI_MEMORY_NAP", "0").env("AI_NOTES_NAP", "0");
     }
 
     fn cmd(&self, cwd: &Path, store: Option<&Path>) -> Command {
@@ -1255,4 +1256,59 @@ fn the_root_is_the_default_branchs_first_commit() {
     assert!(r.status.success(), "{}", text(&r.stderr));
     assert_eq!(s.memories()[0].place.root, root);
     assert_eq!(s.memories()[0].place.branch, "side");
+}
+
+/// A fake `claude` writing summaries: a scope line, a blank line, a gist.
+const FAKE_SUMMARIES: &str = "while read -r line; do
+  printf '%s\\n' '{\"type\":\"result\",\"is_error\":false,\"result\":\"a fake scope\\n\\na fake gist\",\"stop_reason\":\"end_turn\"}'
+done
+";
+
+#[test]
+fn a_note_from_stdin_is_summarised_in_the_background() {
+    let s = Sandbox::new();
+    let path = s.fake_claude(FAKE_SUMMARIES);
+    let mut c = Command::new(env!("CARGO_BIN_EXE_ai"));
+    s.isolate(&mut c);
+    let mut child = c
+        .current_dir(s.path())
+        .args(["notes", "add", "physics.qm", "--confidence", "verified"])
+        .env("AI_NOTES_NAP", "1")
+        .env("PATH", &path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"Decoherence explains apparent collapse.\n")
+        .unwrap();
+    let r = child.wait_with_output().unwrap();
+    assert!(r.status.success(), "{}", text(&r.stderr));
+    assert!(
+        text(&r.stdout).starts_with("Saved as "),
+        "{}",
+        text(&r.stdout)
+    );
+    let notes = s.path().join("home/.ai/notes");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let log = s.git(&notes, &["log", "--format=%s"]);
+        if log == "summary physics\nsummary physics.qm\nadd physics.qm" {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{log}\nnap.log: {}",
+            fs::read_to_string(notes.join(".git/nap.log")).unwrap_or_default()
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+    let sum = fs::read_to_string(notes.join("physics/qm/_summary.md")).unwrap();
+    assert!(sum.ends_with("---\na fake scope\n\na fake gist\n"), "{sum}");
+    assert_eq!(s.git(&notes, &["status", "--porcelain"]), "");
 }
