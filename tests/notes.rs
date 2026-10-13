@@ -357,6 +357,48 @@ fn summaries_build_bottom_up_and_only_when_out_of_date() {
 }
 
 #[test]
+fn a_topic_holding_one_subtopic_takes_its_summary_without_a_model_call() {
+    let n = Notes::new();
+    n.add("linguistics.syntax.minimalism", "Merge is binary.");
+    assert_eq!(n.ok(&["nap"]), "Built 3 summaries.\n");
+    assert_eq!(n.fake.take(), ["minimalism"]);
+    let body = |t: &str| {
+        let s = n.read(&format!("{t}/{SUMMARY}"));
+        s.split_once("---\n")
+            .unwrap()
+            .1
+            .split_once("---\n")
+            .unwrap()
+            .1
+            .to_string()
+    };
+    for t in ["linguistics", "linguistics/syntax"] {
+        assert_eq!(
+            body(t),
+            "scope of minimalism\n\ngist of minimalism: 1 items\n"
+        );
+    }
+    assert_eq!(
+        n.ok(&["nap"]),
+        "Nothing to build.\n",
+        "the copies carry their hashes"
+    );
+
+    n.add("linguistics.syntax", "Move is internal merge.");
+    assert_eq!(n.ok(&["nap"]), "Built 2 summaries.\n");
+    assert_eq!(
+        n.fake.take(),
+        ["syntax"],
+        "a note of its own needs the model"
+    );
+    assert_eq!(
+        body("linguistics"),
+        "scope of syntax\n\ngist of syntax: 2 items\n"
+    );
+    n.clean();
+}
+
+#[test]
 fn the_model_sees_children_and_retries_overlong_replies() {
     let n = Notes::with(Fake {
         long: true,
@@ -423,11 +465,11 @@ fn view_zoom_grep_and_show_read_the_tree() {
     n.ok(&["nap"]);
     assert_eq!(n.ok(&[]), n.ok(&["view"]));
     assert!(n.ok(&[]).starts_with(
-        "linguistics (1): scope of linguistics\n  linguistics.syntax (1): scope of syntax\n"
+        "linguistics (1): scope of syntax\n  linguistics.syntax (1): scope of syntax\n"
     ));
     assert_eq!(
         n.ok(&["zoom", "physics.qm"]),
-        "physics.qm (1): scope of qm\ngist of qm: 1 items\n\n\
+        "physics.qm (1): scope of decoherence\ngist of decoherence: 1 items\n\n\
          physics.qm.decoherence (1): scope of decoherence\ngist of decoherence: 1 items\n"
     );
     assert_eq!(
@@ -446,11 +488,18 @@ fn view_zoom_grep_and_show_read_the_tree() {
         "a capital makes it case-sensitive"
     );
     assert_eq!(
-        n.ok(&["grep", "collapse|qm"]),
-        format!(
-            "physics › qm: scope of qm gist of qm: 1 items\n\
-             physics › qm › decoherence › {deco}: Decoherence explains apparent collapse.\n"
-        )
+        n.ok(&["grep", "decoherence"]),
+        format!("physics › qm › decoherence › {deco}: Decoherence explains apparent collapse.\n"),
+        "summaries above a deeper hit are left out"
+    );
+    assert_eq!(
+        n.ok(&["grep", "syntax|merge"]),
+        format!("linguistics › syntax › {merge}: Merge is binary.\n")
+    );
+    assert_eq!(
+        n.ok(&["grep", "scope"]),
+        "linguistics › syntax: scope of syntax gist of syntax: 1 items\n\
+         physics › qm › decoherence: scope of decoherence gist of decoherence: 1 items\n"
     );
     assert_eq!(n.ok(&["grep", "-F", "a.p"]), "No match.\n");
     assert!(n.fail(&["show", "merge"]).contains("is not a note id"));
@@ -496,9 +545,12 @@ fn mv_moves_notes_and_topics_and_resummarises_both_sides() {
     n.ok(&["mv", "x.z", "r.z"]);
     assert!(!n.dir.join("x/z").exists());
     n.ok(&["nap"]);
-    let mut t = n.fake.take();
-    t.sort();
-    assert_eq!(t, ["r", "x"], "the moved summaries stay valid");
+    assert!(
+        n.fake.take().is_empty(),
+        "the moved summaries stay valid; r and x each take their one child's"
+    );
+    assert!(n.read(&format!("r/{SUMMARY}")).contains("\nscope of w\n"));
+    assert!(n.read(&format!("x/{SUMMARY}")).contains("\nscope of y\n"));
 
     n.ok(&["mv", "x.y", "s"]);
     assert!(

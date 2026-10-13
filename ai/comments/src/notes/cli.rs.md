@@ -9,6 +9,6 @@
 - `link <a> <b>`: appends `b` to `a`'s `links`, directional (backlinks are a lint, layer 2). Idempotent: an existing link makes no commit.
 - `view`: topic lines `topic (valid notes below): scope`, indented by depth, deepest whole level that fits `VIEW_MAX` (8000 bytes, ~2k tokens); a level that alone overflows is cut, with a count. An unsummarised topic shows memory's `PLACEHOLDER`.
 - `zoom <topic>`: the topic's line and gist, each subtopic's line and gist, then its notes as `id [confidence] body` (cut at 300 bytes).
-- `grep`: memory's `Pattern` (smart case, `-F`, `-i`, `-s`) over note bodies and summary scope+gist, every hit with its breadcrumb (`a › b: …`, notes `a › b › <id>: …`), excerpts by memory's `excerpt`. Tree order.
+- `grep`: memory's `Pattern` (smart case, `-F`, `-i`, `-s`) over note bodies and summary scope+gist, every hit with its breadcrumb (`a › b: …`, notes `a › b › <id>: …`), excerpts by memory's `excerpt`. Tree order. Only the deepest hit of a chain prints: a summary hit is dropped when a note of its topic, or anything below it, matches too, since summaries restate what is under them.
 - `show <id>`: the file's path, its text verbatim, then each link resolved to `breadcrumb › id: first line`.
 - No usage log (memory's `usage.rs`) yet.

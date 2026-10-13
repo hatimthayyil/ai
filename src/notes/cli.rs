@@ -263,23 +263,31 @@ fn show(root: &Node, out: &mut dyn Write, id: &str) -> Result<ExitCode> {
 
 fn grep(root: &Node, out: &mut dyn Write, p: &Pattern) -> Result<ExitCode> {
     let re = p.regex()?;
-    let mut hits = Vec::new();
+    let mut found: Vec<(&Topic, bool, String)> = Vec::new();
     root.walk(&mut |n| {
         if let Some(s) = &n.summary {
             let text = format!("{}\n{}", s.scope, s.gist);
             if re.is_match(&text) {
-                hits.push(format!(
-                    "{}: {}",
-                    n.topic.crumbs(),
-                    excerpt(&text, Some(&re))
-                ));
+                let line = format!("{}: {}", n.topic.crumbs(), excerpt(&text, Some(&re)));
+                found.push((&n.topic, false, line));
             }
         }
         for l in n.leaves.iter().filter(|l| re.is_match(&l.body)) {
             let at = n.topic.crumbs();
-            hits.push(format!("{at} › {}: {}", l.id, excerpt(&l.body, Some(&re))));
+            let line = format!("{at} › {}: {}", l.id, excerpt(&l.body, Some(&re)));
+            found.push((&n.topic, true, line));
         }
     });
+    let deeper = |t: &Topic| {
+        found
+            .iter()
+            .any(|(k, leaf, _)| k.within(t) && (*leaf || *k != t))
+    };
+    let hits: Vec<&str> = found
+        .iter()
+        .filter(|(t, leaf, _)| *leaf || !deeper(t))
+        .map(|(_, _, l)| l.as_str())
+        .collect();
     if hits.is_empty() {
         writeln!(out, "No match.")?;
     } else {
@@ -461,11 +469,10 @@ fn round(s: &Store, backend: &dyn Backend, jobs: &[Job]) -> Result<u64> {
         let calls: Vec<_> = jobs
             .iter()
             .map(|j| {
-                sc.spawn(|| {
-                    j.input
-                        .as_deref()
-                        .map(|i| summarise(backend, i))
-                        .transpose()
+                sc.spawn(|| match (&j.copy, &j.input) {
+                    (Some(c), _) => Ok(Some(c.clone())),
+                    (None, Some(i)) => summarise(backend, i).map(Some),
+                    (None, None) => Ok(None),
                 })
             })
             .collect();

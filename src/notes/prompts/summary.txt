@@ -13,14 +13,20 @@ tool, file, number.
 
 A summary has two parts:
 
-1. The scope: one line saying what lies below this topic, the subjects
-it covers, so an agent knows whether its question belongs here.
+1. The scope: one line naming the subjects covered below this topic,
+so an agent knows whether its question belongs here. Only the subjects.
 
-2. The gist: the key claims, the most important first. Space is scarce:
-give the central claims most of it, and the minor ones just enough to be
-named. Keep each claim's trust: a reported or speculative claim must not
-read as verified, and a subtopic's summary must not grow surer as it
-moves up.
+2. The gist: the claims themselves, the most important first. Space is
+scarce: give the central claims most of it, and the minor ones just
+enough to be named. Tag each claim that is not verified with its trust,
+in brackets: "(reported)", "(speculative)", "(assessment)". A verified
+claim is untagged. Keep a subtopic's tags as they are: a claim must
+never grow surer as it moves up.
+
+Write about the subject, never about the notes. No remarks on the notes,
+their number, their sources, their trust as a whole, or the shape of the
+tree: never "both claims are reported", "all content comes from the
+subtopic X", "this topic contains", "the notes say".
 
 Shorten by dropping detail, never by changing meaning: keep negations,
 numbers, and who claims what. Record faithfully: never answer, judge,

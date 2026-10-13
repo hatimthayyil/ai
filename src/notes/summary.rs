@@ -72,11 +72,24 @@ pub fn hash(input: &str) -> Result<String> {
     Ok(id.to_string())
 }
 
-/// One summary to make (or, with no input, to remove).
+/// The summary of `n`'s one subtopic, when that is all `n` holds: `n` takes it as its own.
+pub fn only_child(n: &Node) -> Option<&Summary> {
+    if n.leaves.iter().any(|l| l.is_valid()) {
+        return None;
+    }
+    let mut sums = n.kids.iter().filter_map(|k| k.summary.as_ref());
+    match (sums.next(), sums.next()) {
+        (Some(s), None) => Some(s),
+        _ => None,
+    }
+}
+
+/// One summary to make (or, with no input, to remove); `copy` when it needs no model call.
 #[derive(Clone, Debug)]
 pub struct Job {
     pub topic: Topic,
     pub input: Option<String>,
+    pub copy: Option<(String, String)>,
 }
 
 /// Whether `n`'s summary does not match its input.
@@ -100,6 +113,7 @@ pub fn due(root: &Node) -> Result<Vec<Job>> {
             out.push(Job {
                 topic: n.topic.clone(),
                 input: input(n),
+                copy: only_child(n).map(|s| (s.scope.clone(), s.gist.clone())),
             });
         }
         Ok(below || dirty)
@@ -207,6 +221,8 @@ mod tests {
     #[test]
     fn prompt_is_the_spec_s() {
         assert!(PROMPT.starts_with("You write the summaries of ai notes"));
+        assert!(PROMPT.contains("Write about the subject, never about the notes."));
+        assert!(PROMPT.contains("A verified\nclaim is untagged."));
         assert!(hash("x").unwrap().len() == 40);
     }
 }
