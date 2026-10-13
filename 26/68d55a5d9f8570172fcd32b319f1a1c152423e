@@ -1,0 +1,24 @@
+ai/research/20261013T222521---notes-design.md
+  s_8ea1649a2e72b0::t_a5010e279de98c 16
+  s_8ea1649a2e72b0::t_e207975050ee1a 23-25
+  s_8ea1649a2e72b0::t_547b12526ee170 1-15,17-22,26-44,46-66
+  s_8ea1649a2e72b0::t_b5fe74157b4fc8 45
+ai/research/20261013T222410---notes-prior-art.md
+  s_8ea1649a2e72b0::t_2064f022b42afc 1-140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2668d55a5d9f8570172fcd32b319f1a1c152423e",
+  "prompts": {},
+  "sessions": {
+    "s_8ea1649a2e72b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "79b45b42-017d-4f12-bce4-ae33301d422a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
