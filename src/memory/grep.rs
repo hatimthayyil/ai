@@ -15,8 +15,9 @@ use crate::memory::{
 
 const EXCERPT: usize = 400;
 
+/// A search pattern as typed, rg-style: a regex, or a literal with `-F`; smart case.
 #[derive(Args, Debug)]
-pub struct Grep {
+pub struct Pattern {
     #[arg(
         allow_hyphen_values = true,
         help = "a regex, matched against the text only"
@@ -33,6 +34,44 @@ pub struct Grep {
         help = "match case (default: only if the pattern has a capital)"
     )]
     case_sensitive: bool,
+}
+
+impl Pattern {
+    pub fn regex(&self) -> Result<Regex> {
+        let src = match self.fixed_strings {
+            true => regex::escape(&self.pattern),
+            false => self.pattern.clone(),
+        };
+        let fold = self.ignore_case
+            || !self.case_sensitive && !has_upper(&self.pattern, self.fixed_strings);
+        RegexBuilder::new(&src)
+            .case_insensitive(fold)
+            .build()
+            .map_err(|e| anyhow!("bad regex: {e}"))
+    }
+
+    /// The arguments, as typed.
+    pub fn args(&self) -> Vec<String> {
+        let flags = [
+            (self.fixed_strings, "-F"),
+            (self.ignore_case, "-i"),
+            (self.case_sensitive, "-s"),
+        ];
+        std::iter::once(self.pattern.clone())
+            .chain(
+                flags
+                    .iter()
+                    .filter(|(on, _)| *on)
+                    .map(|(_, f)| f.to_string()),
+            )
+            .collect()
+    }
+}
+
+#[derive(Args, Debug)]
+pub struct Grep {
+    #[command(flatten)]
+    pat: Pattern,
     #[arg(short, long, help = "also search the summaries")]
     tree: bool,
     #[arg(long, value_name = "YYYY-MM-DD", help = "only from this day on (UTC)")]
@@ -108,7 +147,7 @@ fn has_upper(pattern: &str, literal: bool) -> bool {
 }
 
 /// `text` on one line; past [`EXCERPT`] bytes, a window around the first match.
-fn excerpt(text: &str, pat: Option<&Regex>) -> String {
+pub fn excerpt(text: &str, pat: Option<&Regex>) -> String {
     let text = flat(text);
     if text.len() <= EXCERPT {
         return text;
@@ -132,19 +171,6 @@ fn detail(i: u64, m: &Message, meta: &Meta, pat: Option<&Regex>) -> Line {
 }
 
 impl Grep {
-    fn regex(&self) -> Result<Regex> {
-        let src = match self.fixed_strings {
-            true => regex::escape(&self.pattern),
-            false => self.pattern.clone(),
-        };
-        let fold = self.ignore_case
-            || !self.case_sensitive && !has_upper(&self.pattern, self.fixed_strings);
-        RegexBuilder::new(&src)
-            .case_insensitive(fold)
-            .build()
-            .map_err(|e| anyhow!("bad regex: {e}"))
-    }
-
     fn admits(&self, since: &str, ts: &str, origin: &str, who: &Who) -> bool {
         let is = |want: &Option<String>, have: &str| {
             want.as_deref().is_none_or(|w| have.eq_ignore_ascii_case(w))
@@ -171,14 +197,8 @@ impl Grep {
 
     /// The arguments, as typed, but `--before`.
     fn args(&self) -> Vec<String> {
-        let mut a = vec![self.pattern.clone()];
-        let flags = [
-            (self.fixed_strings, "-F"),
-            (self.ignore_case, "-i"),
-            (self.case_sensitive, "-s"),
-            (self.tree, "-t"),
-            (self.count, "-c"),
-        ];
+        let mut a = self.pat.args();
+        let flags = [(self.tree, "-t"), (self.count, "-c")];
         a.extend(
             flags
                 .iter()
@@ -305,7 +325,7 @@ impl Page {
 }
 
 pub fn grep(s: &Snapshot, out: &mut dyn Write, g: &Grep) -> Result<ExitCode> {
-    let pat = g.regex()?;
+    let pat = g.pat.regex()?;
     let t = s.log_len()?;
     let before = g
         .before

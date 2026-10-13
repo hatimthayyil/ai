@@ -202,29 +202,35 @@ impl Default for Runtime {
     }
 }
 
-/// Starts `ai memory nap` on `dir`, detached; it logs to `nap.log` there, its stderr too.
-fn spawn_nap(dir: &Path) -> Result<()> {
+/// Starts `ai <tool> nap` on the store at `dir` (named to it by `$var`), detached; it logs to
+/// `nap.log` in `log_dir`, its stderr too.
+pub fn spawn_nap(tool: &str, var: &str, dir: &Path, log_dir: &Path) -> Result<()> {
     let exe = std::env::current_exe().context("Cannot find this program to start a nap.")?;
     process::Command::new(exe)
-        .args(["memory", "nap"])
-        .env("AI_MEMORY_DIR", dir)
+        .args([tool, "nap"])
+        .env(var, dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(log::open(dir)?)
+        .stderr(log::open(log_dir)?)
         .process_group(0)
         .spawn()
         .context("Cannot start a nap.")?;
     Ok(())
 }
 
-/// `$AI_MEMORY_DIR`, else `~/.ai/memory`.
-pub fn default_dir() -> Result<PathBuf> {
-    if let Some(d) = std::env::var_os("AI_MEMORY_DIR").filter(|d| !d.is_empty()) {
+/// `$var`, else `~/.ai/<name>`.
+pub fn store_dir(var: &str, name: &str) -> Result<PathBuf> {
+    if let Some(d) = std::env::var_os(var).filter(|d| !d.is_empty()) {
         return Ok(d.into());
     }
-    let home =
-        std::env::home_dir().context("No home directory. Point AI_MEMORY_DIR at a memory.")?;
-    Ok(home.join(".ai/memory"))
+    let home = std::env::home_dir()
+        .with_context(|| format!("No home directory. Point {var} at the {name}."))?;
+    Ok(home.join(".ai").join(name))
+}
+
+/// `$AI_MEMORY_DIR`, else `~/.ai/memory`.
+pub fn default_dir() -> Result<PathBuf> {
+    store_dir("AI_MEMORY_DIR", "memory")
 }
 
 impl Cli {
@@ -297,7 +303,7 @@ impl Command {
     }
 }
 
-fn broken_pipe(e: &anyhow::Error) -> bool {
+pub fn broken_pipe(e: &anyhow::Error) -> bool {
     e.chain()
         .filter_map(|c| c.downcast_ref::<io::Error>())
         .any(|e| e.kind() == io::ErrorKind::BrokenPipe)
@@ -455,7 +461,7 @@ fn note(
     let (i, _, _) = s.append("note", &[m])?;
     writeln!(out, "Saved as {i}.")?;
     if rt.nap_on_note && pending(s)? {
-        spawn_nap(s.dir())?;
+        spawn_nap("memory", "AI_MEMORY_DIR", s.dir(), s.dir())?;
     }
     Ok(ExitCode::SUCCESS)
 }
