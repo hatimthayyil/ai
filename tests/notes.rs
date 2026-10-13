@@ -176,9 +176,21 @@ impl Notes {
         r.stderr
     }
 
-    /// Files a note; its id.
+    /// Files a note titled by its text; its id.
     fn add(&self, topic: &str, text: &str) -> String {
-        let out = self.ok(&["add", topic, text, "--confidence", "verified"]);
+        self.add_titled(topic, text, text)
+    }
+
+    fn add_titled(&self, topic: &str, title: &str, text: &str) -> String {
+        let out = self.ok(&[
+            "add",
+            topic,
+            text,
+            "--title",
+            title,
+            "--confidence",
+            "verified",
+        ]);
         let re = Regex::new(r"^Saved as (\d{8}T\d{6}) in (\S+)\.\n$").unwrap();
         let c = re.captures(&out).unwrap_or_else(|| panic!("{out}"));
         assert_eq!(&c[2], topic);
@@ -231,7 +243,9 @@ fn a_note_is_a_markdown_file_and_one_commit() {
     let out = n.ok(&[
         "add",
         "linguistics.syntax.minimalism",
-        "Merge is binary: it combines exactly two objects.",
+        "Merge combines exactly two objects.",
+        "--title",
+        "Merge is binary",
         "--confidence",
         "reported",
         "--source",
@@ -246,12 +260,11 @@ fn a_note_is_a_markdown_file_and_one_commit() {
         .captures(&out)
         .unwrap_or_else(|| panic!("{out}"))[1]
         .to_string();
-    let rel =
-        format!("linguistics/syntax/minimalism/{id}---merge-is-binary-it-combines-exactly.md");
+    let rel = format!("linguistics/syntax/minimalism/{id}---merge-is-binary.md");
     assert_eq!(
         n.read(&rel),
         "---\nsource: https://example.org/mp\nconfidence: reported\nchecked: 2026-10-13\n\
-         decay: slow\n---\nMerge is binary: it combines exactly two objects.\n"
+         decay: slow\n---\n# Merge is binary\n\nMerge combines exactly two objects.\n"
     );
     assert_eq!(n.log(), ["add linguistics.syntax.minimalism"]);
     assert_eq!(n.git(&["ls-files"]), format!("{rel}\n"));
@@ -264,8 +277,8 @@ fn a_note_is_a_markdown_file_and_one_commit() {
 fn bodies_come_from_the_argument_or_stdin_and_are_checked() {
     let n = Notes::new();
     for args in [
-        &["add", "a", "--confidence", "verified"][..],
-        &["add", "a", "-", "--confidence", "verified"],
+        &["add", "a", "--title", "T", "--confidence", "verified"][..],
+        &["add", "a", "-", "--title", "T", "--confidence", "verified"],
     ] {
         let r = n.run_in("From stdin.\n", args);
         assert_eq!(r.code, 0, "{}", r.stderr);
@@ -274,20 +287,73 @@ fn bodies_come_from_the_argument_or_stdin_and_are_checked() {
     assert_eq!(bodies, "From stdin.\nFrom stdin.\n");
     let long = "x".repeat(LEAF_MAX + 1);
     assert!(
-        n.fail(&["add", "a", &long, "--confidence", "verified"])
-            .starts_with("Too long: 1025 bytes")
+        n.fail(&[
+            "add",
+            "a",
+            &long,
+            "--title",
+            "T",
+            "--confidence",
+            "verified"
+        ])
+        .starts_with("Too long: 1025 bytes")
     );
     assert!(
-        n.fail(&["add", "a", " ", "--confidence", "verified"])
+        n.fail(&["add", "a", " ", "--title", "T", "--confidence", "verified"])
             .starts_with("Empty.")
     );
     assert!(
-        n.fail(&["add", "A.b", "x", "--confidence", "verified"])
-            .contains("is not a topic")
+        n.fail(&[
+            "add",
+            "A.b",
+            "x",
+            "--title",
+            "T",
+            "--confidence",
+            "verified"
+        ])
+        .contains("is not a topic")
     );
-    assert!(n.fail(&["add", "a", "x"]).contains("--confidence"));
     assert!(
-        n.fail(&["add", "a", "x", "--confidence", "sure"])
+        n.fail(&["add", "a", "x", "--title", "T"])
+            .contains("--confidence")
+    );
+    assert!(
+        n.fail(&["add", "a", "x", "--confidence", "verified"])
+            .contains("--title")
+    );
+    assert!(
+        n.fail(&["add", "a", "x", "--title", " ", "--confidence", "verified"])
+            .starts_with("A title is one line")
+    );
+    let long_title = "t".repeat(81);
+    assert!(
+        n.fail(&[
+            "add",
+            "a",
+            "x",
+            "--title",
+            &long_title,
+            "--confidence",
+            "verified"
+        ])
+        .starts_with("Title too long: 81 characters")
+    );
+    assert!(
+        n.ok(&[
+            "add",
+            "a",
+            &"x".repeat(LEAF_MAX),
+            "--title",
+            "T",
+            "--confidence",
+            "verified"
+        ])
+        .starts_with("Saved"),
+        "the title is not counted against the body"
+    );
+    assert!(
+        n.fail(&["add", "a", "x", "--title", "T", "--confidence", "sure"])
             .contains("verified")
     );
     assert!(
@@ -295,6 +361,8 @@ fn bodies_come_from_the_argument_or_stdin_and_are_checked() {
             "add",
             "a",
             "x",
+            "--title",
+            "T",
             "--confidence",
             "verified",
             "--link",
@@ -302,7 +370,7 @@ fn bodies_come_from_the_argument_or_stdin_and_are_checked() {
         ])
         .contains("No note 20000101T000000")
     );
-    assert_eq!(n.log().len(), 2, "failures commit nothing");
+    assert_eq!(n.log().len(), 3, "failures commit nothing");
     n.clean();
 }
 
@@ -362,6 +430,10 @@ fn a_topic_holding_one_subtopic_takes_its_summary_without_a_model_call() {
     n.add("linguistics.syntax.minimalism", "Merge is binary.");
     assert_eq!(n.ok(&["nap"]), "Built 3 summaries.\n");
     assert_eq!(n.fake.take(), ["minimalism"]);
+    assert_eq!(
+        n.ok(&[]),
+        "linguistics.syntax.minimalism (1): scope of minimalism\n"
+    );
     let body = |t: &str| {
         let s = n.read(&format!("{t}/{SUMMARY}"));
         s.split_once("---\n")
@@ -392,6 +464,11 @@ fn a_topic_holding_one_subtopic_takes_its_summary_without_a_model_call() {
         "a note of its own needs the model"
     );
     assert_eq!(
+        n.ok(&[]),
+        "linguistics.syntax (2): scope of syntax\n  linguistics.syntax.minimalism (1): scope of minimalism\n",
+        "the view collapses only copies"
+    );
+    assert_eq!(
         body("linguistics"),
         "scope of syntax\n\ngist of syntax: 2 items\n"
     );
@@ -405,16 +482,24 @@ fn the_model_sees_children_and_retries_overlong_replies() {
         ..Fake::default()
     });
     n.add("a.b", "Child claim.");
-    n.ok(&["add", "a", "A guess.", "--confidence", "speculative"]);
+    n.ok(&[
+        "add",
+        "a",
+        "A guess.",
+        "--title",
+        "T",
+        "--confidence",
+        "speculative",
+    ]);
     n.ok(&["nap"]);
     let inputs = n.fake.inputs.lock().unwrap().clone();
     assert!(
-        inputs[0].ends_with("\nTopic: b\n- note [verified]: Child claim."),
+        inputs[0].ends_with("\nTopic: b\n- note [verified] Child claim.: Child claim."),
         "{}",
         inputs[0]
     );
     assert!(
-        inputs[1].ends_with("\nTopic: a\n- subtopic b: scope of b | gist of b: 1 items\n- note [speculative]: A guess."),
+        inputs[1].ends_with("\nTopic: a\n- subtopic b: scope of b | gist of b: 1 items\n- note [speculative] T: A guess."),
         "{}",
         inputs[1]
     );
@@ -450,10 +535,15 @@ fn invalid_notes_stay_out_of_summaries() {
 #[test]
 fn view_zoom_grep_and_show_read_the_tree() {
     let n = Notes::new();
-    let merge = n.add("linguistics.syntax", "Merge is binary.");
-    let deco = n.add(
+    let merge = n.add_titled(
+        "linguistics.syntax",
+        "Merge is binary",
+        "Merge takes two objects.",
+    );
+    let deco = n.add_titled(
         "physics.qm.decoherence",
-        "Decoherence explains apparent collapse.",
+        "Decoherence explains collapse",
+        "Entanglement with the environment makes collapse apparent.",
     );
     assert_eq!(
         n.ok(&["view"]),
@@ -464,9 +554,11 @@ fn view_zoom_grep_and_show_read_the_tree() {
     );
     n.ok(&["nap"]);
     assert_eq!(n.ok(&[]), n.ok(&["view"]));
-    assert!(n.ok(&[]).starts_with(
-        "linguistics (1): scope of syntax\n  linguistics.syntax (1): scope of syntax\n"
-    ));
+    assert_eq!(
+        n.ok(&[]),
+        "linguistics.syntax (1): scope of syntax\nphysics.qm.decoherence (1): scope of decoherence\n",
+        "chains of copied summaries collapse into one line"
+    );
     assert_eq!(
         n.ok(&["zoom", "physics.qm"]),
         "physics.qm (1): scope of decoherence\ngist of decoherence: 1 items\n\n\
@@ -475,7 +567,7 @@ fn view_zoom_grep_and_show_read_the_tree() {
     assert_eq!(
         n.ok(&["zoom", "linguistics.syntax"]),
         format!(
-            "linguistics.syntax (1): scope of syntax\ngist of syntax: 1 items\n\n{merge} [verified] Merge is binary.\n"
+            "linguistics.syntax (1): scope of syntax\ngist of syntax: 1 items\n\n{merge} [verified] Merge is binary\n"
         )
     );
     assert!(
@@ -489,12 +581,17 @@ fn view_zoom_grep_and_show_read_the_tree() {
     );
     assert_eq!(
         n.ok(&["grep", "decoherence"]),
-        format!("physics › qm › decoherence › {deco}: Decoherence explains apparent collapse.\n"),
+        format!("physics › qm › decoherence › {deco}: Decoherence explains collapse\n"),
         "summaries above a deeper hit are left out"
     );
     assert_eq!(
+        n.ok(&["grep", "environment"]),
+        format!("physics › qm › decoherence › {deco}: Decoherence explains collapse\n"),
+        "a body match shows the title"
+    );
+    assert_eq!(
         n.ok(&["grep", "syntax|merge"]),
-        format!("linguistics › syntax › {merge}: Merge is binary.\n")
+        format!("linguistics › syntax › {merge}: Merge is binary\n")
     );
     assert_eq!(
         n.ok(&["grep", "scope"]),
@@ -587,7 +684,7 @@ fn links_are_weak_references_that_do_not_touch_summaries() {
     let show = n.ok(&["show", &a]);
     assert!(
         show.contains(&format!(
-            "\nlinks: [{b}]\n---\nA claim.\n\nLinks:\nq › r › {b}: Related claim.\n"
+            "\nlinks: [{b}]\n---\n# A claim.\n\nA claim.\n\nLinks:\nq › r › {b}: Related claim.\n"
         )),
         "{show}"
     );
@@ -596,7 +693,22 @@ fn links_are_weak_references_that_do_not_touch_summaries() {
             .ends_with(&format!("Links:\nq › r › {b}: Related claim.\n"))
     );
     assert_eq!(n.ok(&["nap"]), "Nothing to build.\n");
-    assert_eq!(n.log().iter().filter(|m| m.starts_with("link ")).count(), 1);
+
+    let old = n.leaf_file(&a);
+    let text = fs::read_to_string(&old).unwrap();
+    fs::write(&old, text.replace("# A claim.", "# Renamed by hand")).unwrap();
+    assert!(
+        n.ok(&["show", &a]).contains("# Renamed by hand"),
+        "found by id"
+    );
+    n.ok(&["link", &a, &hub]);
+    assert!(!old.exists());
+    assert_eq!(
+        n.leaf_file(&a),
+        n.dir.join(format!("p/{a}---renamed-by-hand.md")),
+        "a write renames the file after its title, keeping the id"
+    );
+    assert_eq!(n.log().iter().filter(|m| m.starts_with("link ")).count(), 2);
     n.clean();
 }
 
@@ -606,7 +718,7 @@ fn a_dir_with_other_files_is_refused() {
     fs::create_dir_all(&n.dir).unwrap();
     fs::write(n.dir.join("x"), "").unwrap();
     assert!(
-        n.fail(&["add", "a", "b", "--confidence", "verified"])
+        n.fail(&["add", "a", "b", "--title", "T", "--confidence", "verified"])
             .contains("holds files but no notes")
     );
 }
@@ -625,6 +737,8 @@ fn parallel_adds_lose_nothing() {
                         "add",
                         "t",
                         &format!("claim {i}"),
+                        "--title",
+                        "T",
                         "--confidence",
                         "verified",
                     ],

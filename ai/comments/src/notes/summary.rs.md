@@ -1,7 +1,7 @@
 # summary.rs
 
 - `_summary.md`: frontmatter `hash`, then the scope line, a blank line, the gist.
-- `input`: what the model sees for a topic: `Topic: <name>`, then one line per subtopic summary (`- subtopic <name>: <scope> | <gist>`) and per valid note (`- note [<confidence>]: <body>`). Invalid notes (`invalid_at`) are left out. Links are not in it, so `link` never dirties a summary.
+- `input`: what the model sees for a topic: `Topic: <name>`, then one line per subtopic summary (`- subtopic <name>: <scope> | <gist>`) and per valid note (`- note [<confidence>] <title>: <body>`; the title is the claim's own short name, the best words for a gist). Invalid notes (`invalid_at`) are left out. Links are not in it, so `link` never dirties a summary.
 - Dirty: the sha1 blob id (gix `compute_hash`) of the current input differs from the stored `hash`, or a summary exists with no input (it is removed). Only the topic's own name is in the input, not its path, so moving a subtree dirties only the two parents: the moved summaries stay valid.
 - `only_child`: a topic whose whole input is one subtopic's summary (no valid notes of its own, one summarised subtopic) takes that summary verbatim (`Job::copy`), with no model call, under its own hash, so staleness works as for any summary. Without it a single-child chain (`linguistics › syntax › minimalism`) had every ancestor restate the same claims in new words, and grep printed one fact once per level.
 - `due`: dirty topics with nothing dirty below them. A nap builds those, reloads, repeats: bottom-up, only dirty nodes.

@@ -55,7 +55,7 @@ pub fn input(n: &Node) -> Option<String> {
     }
     for l in n.leaves.iter().filter(|l| l.is_valid()) {
         let c = l.confidence().unwrap_or("unrated");
-        lines.push(format!("- note [{c}]: {}", flat(&l.body)));
+        lines.push(format!("- note [{c}] {}: {}", l.title, flat(&l.body)));
     }
     if lines.is_empty() {
         return None;

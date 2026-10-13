@@ -17,9 +17,9 @@ use crate::{
         pretty, spawn_nap, store_dir,
     },
     notes::{
-        leaf::{Confidence, Front, Leaf, check_body, is_id, new_id, slug},
+        leaf::{Confidence, Front, Leaf, check_body, check_title, is_id, new_id},
         store::{ME, Node, SUMMARY, Store},
-        summary::{Job, Summary, due, hash, input, summarise},
+        summary::{Job, Summary, due, hash, input, only_child, summarise},
         topic::Topic,
     },
 };
@@ -27,8 +27,6 @@ use crate::{
 const DIR_VAR: &str = "AI_NOTES_DIR";
 /// The most `view` prints, in bytes.
 pub const VIEW_MAX: usize = 8000;
-/// The most of a note `zoom` prints, in bytes.
-const BRIEF: usize = 300;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -76,6 +74,11 @@ struct Add {
         help = "the claim, at most 1024 bytes; read from stdin if absent or -"
     )]
     text: Option<String>,
+    #[arg(
+        long,
+        help = "the claim in a few words, at most 80 characters: \"Merge is binary\""
+    )]
+    title: String,
     #[arg(long, value_enum, help = "how far it can be trusted")]
     confidence: Confidence,
     #[arg(long, help = "where it comes from: a URL, file or session")]
@@ -151,20 +154,42 @@ fn line(n: &Node) -> String {
     format!("{} ({}): {scope}", n.topic, n.count())
 }
 
+/// `n`'s one subtopic, when `n`'s summary is a copy of it.
+fn collapsed(n: &Node) -> Option<&Node> {
+    let [k] = n.kids.as_slice() else {
+        return None;
+    };
+    let (Some(s), Some(c)) = (&n.summary, only_child(n)) else {
+        return None;
+    };
+    (s.scope == c.scope && s.gist == c.gist).then_some(k)
+}
+
+/// The view's lines under `n`, with their depth: a chain of copied summaries is one line,
+/// named by its deepest topic.
+fn rows(n: &Node, depth: usize, out: &mut Vec<(usize, String)>) {
+    let mut shown = n;
+    while let Some(k) = collapsed(shown) {
+        shown = k;
+    }
+    out.push((depth, line(shown)));
+    for k in &shown.kids {
+        rows(k, depth + 1, out);
+    }
+}
+
 fn view(root: &Node, out: &mut dyn Write) -> Result<ExitCode> {
     if root.kids.is_empty() {
         writeln!(
             out,
-            "No notes yet. File the first with: {ME} add <topic> \"<claim>\" --confidence <level>"
+            "No notes yet. File the first with: {ME} add <topic> \"<claim>\" --title <title> --confidence <level>"
         )?;
         return Ok(ExitCode::SUCCESS);
     }
     let mut nodes = Vec::new();
-    root.walk(&mut |n| {
-        if !n.topic.is_root() {
-            nodes.push((n.topic.depth(), line(n)));
-        }
-    });
+    for k in &root.kids {
+        rows(k, 1, &mut nodes);
+    }
     let deepest = nodes.iter().map(|(d, _)| *d).max().unwrap_or(1);
     let size = |d: usize| -> usize {
         nodes
@@ -214,12 +239,7 @@ fn zoom(root: &Node, out: &mut dyn Write, t: &Topic) -> Result<ExitCode> {
         .iter()
         .map(|l| {
             let c = l.confidence().unwrap_or("unrated");
-            let brief = excerpt(&l.body, None);
-            let brief = match brief.len() > BRIEF {
-                true => format!("{}…", &brief[..brief.floor_char_boundary(BRIEF)]),
-                false => brief,
-            };
-            format!("{} [{c}] {brief}", l.id)
+            format!("{} [{c}] {}", l.id, excerpt(l.label(), None))
         })
         .collect();
     if !notes.is_empty() {
@@ -241,7 +261,7 @@ fn find<'a>(root: &'a Node, id: &str) -> Result<&'a Leaf> {
 
 fn show(root: &Node, out: &mut dyn Write, id: &str) -> Result<ExitCode> {
     let l = find(root, id)?;
-    writeln!(out, "{}", l.topic.rel().join(l.file_name()).display())?;
+    writeln!(out, "{}", l.rel().display())?;
     write!(out, "{}", l.render())?;
     let links = l.links();
     if !links.is_empty() {
@@ -253,7 +273,7 @@ fn show(root: &Node, out: &mut dyn Write, id: &str) -> Result<ExitCode> {
                 out,
                 "{} › {id}: {}",
                 to.topic.crumbs(),
-                excerpt(to.body.lines().next().unwrap_or_default(), None)
+                excerpt(to.label(), None)
             )?,
             None => writeln!(out, "{id}: no such note")?,
         }
@@ -272,9 +292,10 @@ fn grep(root: &Node, out: &mut dyn Write, p: &Pattern) -> Result<ExitCode> {
                 found.push((&n.topic, false, line));
             }
         }
-        for l in n.leaves.iter().filter(|l| re.is_match(&l.body)) {
+        let hit = |l: &&Leaf| re.is_match(&l.title) || re.is_match(&l.body);
+        for l in n.leaves.iter().filter(hit) {
             let at = n.topic.crumbs();
-            let line = format!("{at} › {}: {}", l.id, excerpt(&l.body, Some(&re)));
+            let line = format!("{at} › {}: {}", l.id, excerpt(l.label(), None));
             found.push((&n.topic, true, line));
         }
     });
@@ -312,6 +333,7 @@ fn add(s: &Store, out: &mut dyn Write, rt: &Runtime, a: Add) -> Result<ExitCode>
         Some(t) => t.to_string(),
     };
     let body = check_body(&text)?;
+    let title = check_title(&a.title)?;
     let mut front = Front::default();
     if let Some(v) = &a.source {
         front.set("source", one_line("source", v)?.into());
@@ -333,14 +355,8 @@ fn add(s: &Store, out: &mut dyn Write, rt: &Runtime, a: Add) -> Result<ExitCode>
         if !links.is_empty() {
             front.set_list("links", &links);
         }
-        let leaf = Leaf {
-            id: new_id(&root.ids()),
-            slug: slug(body),
-            topic: topic.clone(),
-            front,
-            body: body.into(),
-        };
-        s.write(&topic.rel().join(leaf.file_name()), &leaf.render())?;
+        let leaf = Leaf::new(new_id(&root.ids()), topic.clone(), front, title, body);
+        s.put_leaf(&leaf)?;
         Ok(leaf.id)
     })?;
     writeln!(out, "Saved as {id} in {topic}.")?;
@@ -356,8 +372,7 @@ fn mv(s: &Store, out: &mut dyn Write, rt: &Runtime, from: &str, to: &str) -> Res
             if l.topic == dest {
                 bail!("{from} is in {dest} already.");
             }
-            let name = l.file_name();
-            s.rename(&l.topic.rel().join(&name), &dest.rel().join(&name))?;
+            s.rename(&l.rel(), &dest.rel().join(l.file_name()))?;
             return s.prune(&l.topic);
         }
         let t = Topic::parse(from)?;
@@ -394,7 +409,7 @@ fn link(s: &Store, out: &mut dyn Write, from: &str, to: &str) -> Result<ExitCode
         }
         links.push(to.into());
         l.front.set_list("links", &links);
-        s.write(&l.topic.rel().join(l.file_name()), &l.render())?;
+        s.put_leaf(&l)?;
         Ok(true)
     })?;
     match added {

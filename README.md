@@ -30,7 +30,8 @@ ai memory grep <regex>          # search every message
 `ai` stores memories in `~/.ai/memory`, or in `$AI_MEMORY_DIR` if you set it. A newer `ai` upgrades the memory on first use and prints the commit holding its previous state; older releases then fail on it without writing.
 
 ```sh
-ai notes add physics.qm "a claim" --confidence verified  # file a note (or pipe it on stdin)
+# file a note (or pipe its text on stdin)
+ai notes add physics.qm "the claim, in detail" --title "Decoherence explains collapse" --confidence verified
 ai notes                        # the top of the tree: each topic's scope
 ai notes zoom physics.qm        # a topic's subtopics and notes
 ai notes grep <regex>           # search every note and summary

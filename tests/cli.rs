@@ -1272,7 +1272,14 @@ fn a_note_from_stdin_is_summarised_in_the_background() {
     s.isolate(&mut c);
     let mut child = c
         .current_dir(s.path())
-        .args(["notes", "add", "physics.qm", "--confidence", "verified"])
+        .args([
+            "notes",
+            "add",
+            "physics.qm",
+            "--title",
+            "Decoherence explains collapse",
+        ])
+        .args(["--confidence", "verified"])
         .env("AI_NOTES_NAP", "1")
         .env("PATH", &path)
         .stdin(Stdio::piped())

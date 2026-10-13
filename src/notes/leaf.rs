@@ -1,4 +1,4 @@
-use std::{collections::HashSet, sync::LazyLock};
+use std::{collections::HashSet, path::PathBuf, sync::LazyLock};
 
 use anyhow::{Result, bail};
 use clap::ValueEnum;
@@ -9,7 +9,8 @@ use crate::notes::topic::Topic;
 
 /// The longest note body, in bytes.
 pub const LEAF_MAX: usize = 1024;
-const SLUG_WORDS: usize = 6;
+/// The longest note title, in characters.
+pub const TITLE_MAX: usize = 80;
 const SLUG_MAX: usize = 48;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -100,13 +101,15 @@ impl Front {
     }
 }
 
-/// One note: one claim, filed under a topic.
+/// One note: one claim, filed under a topic. `name` is its file name on disk; `title` is its
+/// first line, `# <title>`, and `body` the rest.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Leaf {
     pub id: String,
-    pub slug: String,
+    pub name: String,
     pub topic: Topic,
     pub front: Front,
+    pub title: String,
     pub body: String,
 }
 
@@ -134,14 +137,14 @@ pub fn new_id(taken: &HashSet<String>) -> String {
     }
 }
 
-/// A file-name slug from the first words of `text`.
-pub fn slug(text: &str) -> String {
-    let first = text.lines().next().unwrap_or_default().to_lowercase();
+/// A file-name slug from the words of `title`.
+pub fn slug(title: &str) -> String {
+    let title = title.to_lowercase();
     let mut out = String::new();
-    let words = first
+    let words = title
         .split(|c: char| !c.is_ascii_alphanumeric())
         .filter(|w| !w.is_empty());
-    for w in words.take(SLUG_WORDS) {
+    for w in words {
         if !out.is_empty() && out.len() + 1 + w.len() > SLUG_MAX {
             break;
         }
@@ -163,26 +166,69 @@ static LINK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[\[(\d{8}T\d{6})\]\]").expect("a valid regex"));
 
 impl Leaf {
+    /// A new note, named after its title.
+    pub fn new(id: String, topic: Topic, front: Front, title: &str, body: &str) -> Leaf {
+        let mut l = Leaf {
+            id,
+            name: String::new(),
+            topic,
+            front,
+            title: title.into(),
+            body: body.into(),
+        };
+        l.name = l.file_name();
+        l
+    }
+
     pub fn parse(topic: &Topic, name: &str, text: &str) -> Result<Leaf> {
-        let Some((id, slug)) = parse_name(name) else {
+        let Some((id, _)) = parse_name(name) else {
             bail!("{name} is not named <id>---<slug>.md");
         };
-        let (front, body) = Front::parse(text)?;
+        let (front, rest) = Front::parse(text)?;
+        let (title, body) = match rest.strip_prefix("# ") {
+            Some(r) => r.split_once('\n').unwrap_or((r, "")),
+            None => ("", rest),
+        };
         Ok(Leaf {
             id: id.into(),
-            slug: slug.into(),
+            name: name.into(),
             topic: topic.clone(),
             front,
-            body: body.into(),
+            title: title.trim().into(),
+            body: body.trim().into(),
         })
     }
 
+    /// The file name its title gives it: `<id>---<slug of title>.md`; its current name if untitled.
     pub fn file_name(&self) -> String {
-        format!("{}---{}.md", self.id, self.slug)
+        match self.title.is_empty() {
+            true => self.name.clone(),
+            false => format!("{}---{}.md", self.id, slug(&self.title)),
+        }
+    }
+
+    /// Its file, relative to the store, as on disk.
+    pub fn rel(&self) -> PathBuf {
+        self.topic.rel().join(&self.name)
     }
 
     pub fn render(&self) -> String {
-        format!("{}{}\n", self.front.render(), self.body)
+        let text: Vec<String> = [
+            (!self.title.is_empty()).then(|| format!("# {}", self.title)),
+            (!self.body.is_empty()).then(|| self.body.clone()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        format!("{}{}\n", self.front.render(), text.join("\n\n"))
+    }
+
+    /// Its title, else the start of its body.
+    pub fn label(&self) -> &str {
+        match self.title.is_empty() {
+            true => self.body.lines().next().unwrap_or_default(),
+            false => &self.title,
+        }
     }
 
     /// Absent `invalid_at`: not superseded or refuted.
@@ -204,6 +250,19 @@ impl Leaf {
         }
         out
     }
+}
+
+/// A note title: one line, at most [`TITLE_MAX`] characters.
+pub fn check_title(title: &str) -> Result<&str> {
+    let title = title.trim();
+    if title.is_empty() || title.contains(['\n', '\r']) {
+        bail!("A title is one line naming the claim, like \"Merge is binary\".");
+    }
+    let n = title.chars().count();
+    if n > TITLE_MAX {
+        bail!("Title too long: {n} characters, limit {TITLE_MAX}. Name the claim in a few words.");
+    }
+    Ok(title)
 }
 
 /// A note body: not empty, at most [`LEAF_MAX`] bytes.
@@ -230,9 +289,10 @@ mod tests {
         let text = "---\nsource: https://x.org/a\nconfidence: verified\nchecked: 2026-10-13\n\
                     decay: slow\nlinks: [20261013T221500, 20261013T221501]\n\
                     supersedes: 20261001T000000\ninvalid_at: 2026-10-14\nmine: kept\n---\n\
-                    Merge is binary.\n\n--- not a fence\n";
+                    # Merge is binary\n\nMerge combines two objects.\n\n--- not a fence\n";
         let leaf = Leaf::parse(&Topic::default(), "20261013T221502---merge.md", text).unwrap();
-        assert_eq!(leaf.body, "Merge is binary.\n\n--- not a fence");
+        assert_eq!(leaf.title, "Merge is binary");
+        assert_eq!(leaf.body, "Merge combines two objects.\n\n--- not a fence");
         assert_eq!(leaf.front.get("mine"), Some("kept"));
         assert_eq!(
             leaf.front.list("links"),
@@ -247,11 +307,39 @@ mod tests {
     }
 
     #[test]
+    fn titles_name_the_file_and_untitled_notes_keep_theirs() {
+        let t = Topic::parse("a").unwrap();
+        let l = Leaf::new(
+            "20261013T221502".into(),
+            t.clone(),
+            Front::default(),
+            "Merge is binary",
+            "Body.",
+        );
+        assert_eq!(l.name, "20261013T221502---merge-is-binary.md");
+        assert_eq!(
+            l.rel(),
+            PathBuf::from("a/20261013T221502---merge-is-binary.md")
+        );
+        assert_eq!(l.render(), "# Merge is binary\n\nBody.\n");
+        let mut hand = Leaf::parse(&t, "20261013T221502---old.md", "# New title\nBody.").unwrap();
+        assert_eq!(
+            (hand.title.as_str(), hand.body.as_str()),
+            ("New title", "Body.")
+        );
+        assert_eq!(hand.file_name(), "20261013T221502---new-title.md");
+        assert_eq!(hand.rel(), PathBuf::from("a/20261013T221502---old.md"));
+        hand.title.clear();
+        assert_eq!(hand.file_name(), "20261013T221502---old.md");
+        assert_eq!(hand.label(), "Body.");
+    }
+
+    #[test]
     fn links_come_from_the_frontmatter_and_the_body() {
         let mut leaf = Leaf::parse(
             &Topic::default(),
             "20261013T221502---hub.md",
-            "---\nlinks: [20261013T221500]\n---\nSee [[20261013T221501]] and [[20261013T221500]].",
+            "---\nlinks: [20261013T221500]\n---\n# Hub\nSee [[20261013T221501]] and [[20261013T221500]].",
         )
         .unwrap();
         assert_eq!(leaf.links(), ["20261013T221500", "20261013T221501"]);
@@ -271,7 +359,7 @@ mod tests {
         );
         assert_eq!(parse_name("_summary.md"), None);
         assert_eq!(
-            slug("Merge is binary, per Chomsky (1995).\nmore"),
+            slug("Merge is binary, per Chomsky (1995)"),
             "merge-is-binary-per-chomsky-1995"
         );
         assert_eq!(slug("¿Qué?"), "qu");
@@ -283,7 +371,17 @@ mod tests {
     }
 
     #[test]
-    fn bodies_are_capped() {
+    fn titles_and_bodies_are_capped() {
+        assert_eq!(check_title(" Merge is binary ").unwrap(), "Merge is binary");
+        assert!(check_title(" ").is_err() && check_title("a\nb").is_err());
+        assert!(check_title(&"é".repeat(TITLE_MAX)).is_ok());
+        let e = check_title(&"x".repeat(TITLE_MAX + 1))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.starts_with("Title too long: 81 characters, limit 80."),
+            "{e}"
+        );
         assert_eq!(check_body("  a claim \n").unwrap(), "a claim");
         assert!(check_body(" \n").is_err());
         assert!(check_body(&"x".repeat(LEAF_MAX)).is_ok());

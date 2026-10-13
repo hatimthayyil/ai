@@ -213,6 +213,16 @@ impl Store {
         fs::rename(&tmp, &p).at(&p)
     }
 
+    /// Writes `l` under the name its title gives it, removing its old file if that differs.
+    pub fn put_leaf(&self, l: &Leaf) -> Result<()> {
+        let rel = l.topic.rel().join(l.file_name());
+        self.write(&rel, &l.render())?;
+        if !l.name.is_empty() && rel != l.rel() && self.path(&l.rel()).exists() {
+            self.remove(&l.rel())?;
+        }
+        Ok(())
+    }
+
     pub fn remove(&self, rel: &Path) -> Result<()> {
         let p = self.path(rel);
         fs::remove_file(&p).at(&p)
