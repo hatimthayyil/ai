@@ -370,14 +370,7 @@ fn short_messages_are_their_own_nodes() {
         "a tool call's line is empty"
     );
     let free = snap.node(Coord::new(1, 0)).unwrap().unwrap();
-    assert_eq!(
-        free.who,
-        Who {
-            agent: "-".into(),
-            model: "-".into(),
-            session: "-".into()
-        }
-    );
+    assert_eq!(free.who, Who::default());
     assert_eq!(free.origin, s.origin());
     let exact = "x".repeat(NODE);
     let line = exact.clone();
@@ -409,7 +402,11 @@ fn short_messages_are_their_own_nodes() {
     let m = Mem::load(&s.snapshot().unwrap(), VIEW).unwrap();
     assert_eq!(m.t(), 4);
     assert!(m.all_built());
-    let ids: Vec<_> = m.lines().iter().map(|l| l.split('|').next().unwrap().to_string()).collect();
+    let ids: Vec<_> = m
+        .lines()
+        .iter()
+        .map(|l| l.split('|').next().unwrap().to_string())
+        .collect();
     assert_eq!(ids, ["0", "1", "3"], "the view leaves out tool calls");
 }
 
@@ -735,7 +732,13 @@ fn a_life_through_the_cli() {
     assert_eq!(r.stdout, "Saved as 41.\n");
 
     let wake = run(d, &["wake"]).stdout;
-    let ts = Store::open(d).unwrap().snapshot().unwrap().message(40).unwrap().ts;
+    let ts = Store::open(d)
+        .unwrap()
+        .snapshot()
+        .unwrap()
+        .message(40)
+        .unwrap()
+        .ts;
     let (today, now) = (
         format!("{}-{}-{}", &ts[..4], &ts[4..6], &ts[6..8]),
         format!("{}:{}", &ts[9..11], &ts[11..13]),
@@ -783,7 +786,10 @@ fn a_life_through_the_cli() {
     let wake = run(d, &["wake"]).stdout;
     let ids = line_ids(&wake);
     assert_eq!(ids.len(), 8, "{wake}");
-    assert!(ids[0].0 == 0 && ids[0].1 > 1, "the oldest are summarized: {wake}");
+    assert!(
+        ids[0].0 == 0 && ids[0].1 > 1,
+        "the oldest are summarized: {wake}"
+    );
     assert!(ids.windows(2).all(|w| w[0].0 + w[0].1 == w[1].0), "{wake}");
     assert_eq!(ids[7].0 + ids[7].1, 42, "{wake}");
     let straddled = ids.iter().find(|(id, n)| *id < 5 && id + n > 5).unwrap();
@@ -1020,6 +1026,7 @@ fn every_store_has_one_origin_stamped_on_what_it_writes() {
             repo: "acme/widget".into(),
             head: "0123456789ab".into(),
             branch: "main".into(),
+            ..Place::default()
         },
         who: Who {
             agent: "codex".into(),

@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
-    fs::{File, TryLockError},
+    fs::File,
     sync::{
         Arc,
         mpsc::{Receiver, RecvTimeoutError, Sender, channel},
@@ -18,7 +18,7 @@ use crate::memory::{
     backend::{Backend, Block},
     log,
     record::{Message, Who, flat},
-    store::{AtPath, Store},
+    store::Store,
     tree::{Coord, NODE},
     view::{Mem, VIEW},
 };
@@ -31,7 +31,6 @@ pub const RETRY: Duration = Duration::from_secs(10);
 pub const RETRY_MAX: Duration = Duration::from_secs(300);
 pub const RETRIES: usize = 8;
 pub const MARKS: [usize; 3] = [50_000, 80_000, 100_000];
-const LOCK: &str = "compact.lock";
 
 /// What one compactor call builds.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -204,13 +203,9 @@ pub struct Compactor<'s> {
 impl<'s> Compactor<'s> {
     /// Takes the memory's compactor lock; `None` if another compactor holds it.
     pub fn new(store: &'s Store, backend: Arc<dyn Backend>, opts: Options) -> Result<Option<Self>> {
-        let p = store.dir().join(LOCK);
-        let lock = File::create(&p).at(&p)?;
-        match lock.try_lock() {
-            Ok(()) => {}
-            Err(TryLockError::WouldBlock) => return Ok(None),
-            Err(TryLockError::Error(e)) => return Err(e).at(&p),
-        }
+        let Some(lock) = store.try_lock()? else {
+            return Ok(None);
+        };
         let mem = Mem::load(&store.snapshot()?, opts.budget)?;
         let (tx, rx) = channel();
         Ok(Some(Compactor {

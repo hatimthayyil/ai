@@ -36,6 +36,7 @@ impl Kind {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Place {
     pub repo: String,
+    pub root: String,
     pub head: String,
     pub branch: String,
 }
@@ -57,7 +58,7 @@ pub struct Message {
     pub text: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Node {
     pub ts: String,
     pub origin: String,
@@ -65,12 +66,14 @@ pub struct Node {
     pub text: String,
 }
 
+/// The columns this ai writes a node segment with; `text` is last.
+pub const COLUMNS: [&str; 6] = ["ts", "origin", "agent", "model", "session", "text"];
+
+/// A header or column value: whitespace becomes `_`.
 fn field(v: &str) -> String {
-    let v: String = v
-        .chars()
+    v.chars()
         .map(|c| if c.is_whitespace() { '_' } else { c })
-        .collect();
-    if v.is_empty() { "-".into() } else { v }
+        .collect()
 }
 
 /// Newlines as single spaces: how every line shows a text.
@@ -78,7 +81,7 @@ pub fn flat(s: &str) -> String {
     s.replace("\r\n", " ").replace(['\r', '\n'], " ")
 }
 
-fn valid_ts(ts: &str) -> bool {
+pub fn valid_ts(ts: &str) -> bool {
     DateTime::strptime(TS, ts).is_ok()
 }
 
@@ -95,51 +98,72 @@ impl Message {
         }
     }
 
-    pub fn encode(&self) -> Vec<u8> {
-        let (p, w) = (&self.place, &self.who);
-        let head = [
-            self.ts.as_str(),
-            self.kind.name(),
-            &self.origin,
-            &p.repo,
-            &p.head,
-            &p.branch,
-            &w.agent,
-            &w.model,
-            &w.session,
-        ]
-        .map(field)
-        .join(" ");
-        format!("{head}\n{}", self.text).into_bytes()
+    fn slot(&mut self, key: &str) -> Option<&mut String> {
+        let (p, w) = (&mut self.place, &mut self.who);
+        Some(match key {
+            "ts" => &mut self.ts,
+            "origin" => &mut self.origin,
+            "repo" => &mut p.repo,
+            "root" => &mut p.root,
+            "head" => &mut p.head,
+            "branch" => &mut p.branch,
+            "agent" => &mut w.agent,
+            "model" => &mut w.model,
+            "session" => &mut w.session,
+            _ => return None,
+        })
     }
 
+    /// `key value` lines, the empty ones left out, a blank line, then the text verbatim.
+    pub fn encode(&self) -> Vec<u8> {
+        let (p, w) = (&self.place, &self.who);
+        let fields = [
+            ("ts", self.ts.as_str()),
+            ("kind", self.kind.name()),
+            ("origin", &self.origin),
+            ("repo", &p.repo),
+            ("root", &p.root),
+            ("head", &p.head),
+            ("branch", &p.branch),
+            ("agent", &w.agent),
+            ("model", &w.model),
+            ("session", &w.session),
+        ];
+        let mut s = String::new();
+        for (k, v) in fields.into_iter().filter(|(_, v)| !v.is_empty()) {
+            s += &format!("{k} {}\n", field(v));
+        }
+        s.push('\n');
+        s += &self.text;
+        s.into_bytes()
+    }
+
+    /// Needs `ts`, `kind` and `origin`; other fields absent are empty, unknown ones ignored.
     pub fn decode(b: &[u8]) -> Result<Message> {
         let corrupt = || anyhow::anyhow!("A message is corrupt.");
         let s = std::str::from_utf8(b).map_err(|_| corrupt())?;
-        let (head, text) = s.split_once('\n').ok_or_else(corrupt)?;
-        let f: Vec<&str> = head.split(' ').collect();
-        let [ts, kind, origin, repo, hd, branch, agent, model, session] = f[..] else {
-            return Err(corrupt());
-        };
-        if !valid_ts(ts) {
+        let (head, text) = s.split_once("\n\n").ok_or_else(corrupt)?;
+        let mut m = Message::new(Kind::Note, text);
+        let mut kind = None;
+        for line in head.split('\n') {
+            let (k, v) = line.split_once(' ').ok_or_else(corrupt)?;
+            if k == "kind" {
+                let new = Kind::parse(v).ok_or_else(corrupt)?;
+                if kind.replace(new).is_some() {
+                    return Err(corrupt());
+                }
+            } else if let Some(slot) = m.slot(k) {
+                if !slot.is_empty() {
+                    return Err(corrupt());
+                }
+                *slot = v.into();
+            }
+        }
+        m.kind = kind.ok_or_else(corrupt)?;
+        if !valid_ts(&m.ts) || m.origin.is_empty() {
             return Err(corrupt());
         }
-        Ok(Message {
-            ts: ts.into(),
-            kind: Kind::parse(kind).ok_or_else(corrupt)?,
-            origin: origin.into(),
-            place: Place {
-                repo: repo.into(),
-                head: hd.into(),
-                branch: branch.into(),
-            },
-            who: Who {
-                agent: agent.into(),
-                model: model.into(),
-                session: session.into(),
-            },
-            text: text.into(),
-        })
+        Ok(m)
     }
 
     /// The message as the tree sees it: a note bare, a chat message as `kind: text`.
@@ -152,7 +176,11 @@ impl Message {
 
     /// Its leaf: the flat label, or empty for a kind not [`Kind::shown`].
     pub fn line(&self) -> String {
-        if self.kind.shown() { flat(&self.label()) } else { String::new() }
+        if self.kind.shown() {
+            flat(&self.label())
+        } else {
+            String::new()
+        }
     }
 
     /// `YYYY-MM-DD HH:MM` in the time zone `tz`.
@@ -167,25 +195,45 @@ impl Message {
 }
 
 impl Node {
-    pub fn encode(&self) -> String {
-        let w = &self.who;
-        let head = [&self.ts, &self.origin, &w.agent, &w.model, &w.session].map(|f| field(f));
-        format!("{} {}", head.join(" "), flat(&self.text))
+    fn slot(&mut self, col: &str) -> Option<&mut String> {
+        let w = &mut self.who;
+        Some(match col {
+            "ts" => &mut self.ts,
+            "origin" => &mut self.origin,
+            "agent" => &mut w.agent,
+            "model" => &mut w.model,
+            "session" => &mut w.session,
+            "text" => &mut self.text,
+            _ => return None,
+        })
     }
 
-    pub fn decode(line: &str) -> Option<Node> {
-        let mut f = line.splitn(6, ' ');
-        let [ts, origin, agent, model, session, text] = [(); 6].map(|_| f.next().unwrap_or(""));
-        valid_ts(ts).then(|| Node {
-            ts: ts.into(),
-            origin: origin.into(),
-            who: Who {
-                agent: agent.into(),
-                model: model.into(),
-                session: session.into(),
-            },
-            text: text.into(),
-        })
+    /// One line under the column row `cols`, the text flattened; a column it lacks is empty.
+    pub fn encode(&self, cols: &[String]) -> String {
+        let mut n = self.clone();
+        n.text = flat(&self.text);
+        let vs: Vec<String> = cols
+            .iter()
+            .map(|c| match n.slot(c) {
+                Some(v) if c == "text" => v.clone(),
+                Some(v) => field(v),
+                None => String::new(),
+            })
+            .collect();
+        vs.join(" ")
+    }
+
+    /// The node on `line` under the column row `cols`; `None` if not built.
+    pub fn decode(line: &str, cols: &[String]) -> Option<Node> {
+        let mut n = Node::default();
+        let mut vs = line.splitn(cols.len(), ' ');
+        for c in cols {
+            let v = vs.next()?;
+            if let Some(slot) = n.slot(c) {
+                *slot = v.into();
+            }
+        }
+        valid_ts(&n.ts).then_some(n)
     }
 }
 
@@ -212,6 +260,7 @@ mod tests {
             origin: "7KQ2ZD".into(),
             place: Place {
                 repo: "acme/widget".into(),
+                root: String::new(),
                 head: "0123456789ab".into(),
                 branch: "feature/a b".into(),
             },
@@ -220,7 +269,7 @@ mod tests {
                 model: "".into(),
                 session: "ünï".into(),
             },
-            text: "line one\nline two\n".into(),
+            text: "line one\n\nline two\n".into(),
         }
     }
 
@@ -228,30 +277,65 @@ mod tests {
     fn messages_round_trip() {
         let m = message();
         let b = m.encode();
-        assert!(
-            b.starts_with(b"20261003T142233Z tool 7KQ2ZD acme/widget 0123456789ab feature/a_b ")
+        assert_eq!(
+            std::str::from_utf8(&b).unwrap(),
+            "ts 20261003T142233Z\nkind tool\norigin 7KQ2ZD\nrepo acme/widget\n\
+             head 0123456789ab\nbranch feature/a_b\nagent claude-code\nsession ünï\n\n\
+             line one\n\nline two\n"
         );
         let back = Message::decode(&b).unwrap();
-        assert_eq!(back.origin, "7KQ2ZD");
         assert_eq!(back.place.branch, "feature/a_b");
-        assert_eq!(back.who.model, "-");
-        assert_eq!(back.who.session, "ünï");
+        assert_eq!(
+            (back.who.model.as_str(), back.place.root.as_str()),
+            ("", "")
+        );
         assert_eq!(back.text, m.text);
-        assert_eq!(back.label(), "tool: line one\nline two\n");
-        let note = Message { kind: Kind::Note, ..back.clone() };
-        assert_eq!(note.label(), "line one\nline two\n");
+        assert_eq!(back.label(), "tool: line one\n\nline two\n");
+        let note = Message {
+            kind: Kind::Note,
+            ..back.clone()
+        };
+        assert_eq!(note.label(), "line one\n\nline two\n");
         let tz = TimeZone::fixed(jiff::tz::offset(-15));
         assert_eq!(back.time_in(&tz), "2026-10-02 23:22");
         assert_eq!(back.time_in(&TimeZone::UTC), "2026-10-03 14:22");
         assert_eq!(Message::decode(&back.encode()).unwrap(), back);
-        assert!(Message::decode(b"garbage").is_err());
-        assert!(Message::decode(b"20261003T142233Z chat - - - - - - -\nx").is_err());
-        assert!(Message::decode(b"20261003T142233Z note - - - - - -\nx").is_err());
-        assert!(Message::decode(&[0xff, b'\n']).is_err());
     }
 
     #[test]
-    fn nodes_are_one_line() {
+    fn message_headers_need_ts_kind_and_origin_and_skip_unknown_keys() {
+        let ok = b"origin O\nlater a value\nkind note\nts 20261003T142233Z\n\nx";
+        let m = Message::decode(ok).unwrap();
+        assert_eq!(
+            (m.kind, m.origin.as_str(), m.text.as_str()),
+            (Kind::Note, "O", "x")
+        );
+        for bad in [
+            &b"garbage"[..],
+            b"ts 20261003T142233Z\nkind note\n\nx",
+            b"ts 20261003T142233Z\norigin O\n\nx",
+            b"kind note\norigin O\n\nx",
+            b"ts 2026\nkind note\norigin O\n\nx",
+            b"ts 20261003T142233Z\nkind chat\norigin O\n\nx",
+            b"ts 20261003T142233Z\nkind note\norigin O\norigin P\n\nx",
+            b"ts 20261003T142233Z\nkind note\norigin O\nrepo\n\nx",
+            b"20261003T142233Z note O - - - - - -\nx",
+            &[0xff, b'\n', b'\n'],
+        ] {
+            assert!(
+                Message::decode(bad).is_err(),
+                "{}",
+                String::from_utf8_lossy(bad)
+            );
+        }
+    }
+
+    fn cols(cs: &[&str]) -> Vec<String> {
+        cs.iter().map(|c| c.to_string()).collect()
+    }
+
+    #[test]
+    fn nodes_are_one_line_under_their_columns() {
         let n = Node {
             ts: "20261003T142233Z".into(),
             origin: "7KQ2ZD".into(),
@@ -262,18 +346,32 @@ mod tests {
             },
             text: "a\nb\r\nc".into(),
         };
-        let line = n.encode();
-        assert_eq!(line, "20261003T142233Z 7KQ2ZD claude-code - s_1 a b c");
-        let back = Node::decode(&line).unwrap();
-        assert_eq!(back.origin, "7KQ2ZD");
+        let cs = cols(&COLUMNS);
+        let line = n.encode(&cs);
+        assert_eq!(line, "20261003T142233Z 7KQ2ZD claude-code  s_1 a b c");
+        let back = Node::decode(&line, &cs).unwrap();
         assert_eq!(
-            (back.who.model.as_str(), back.who.session.as_str()),
-            ("-", "s_1")
+            (
+                back.who.model.as_str(),
+                back.who.session.as_str(),
+                back.text.as_str()
+            ),
+            ("", "s_1", "a b c")
         );
-        assert_eq!(back.text, "a b c");
-        assert_eq!(Node::decode(&back.encode()), Some(back));
-        assert!(Node::decode("").is_none());
-        assert_eq!(Node::decode("20261003T142233Z O a m s ").unwrap().text, "");
+        assert_eq!(Node::decode(&back.encode(&cs), &cs), Some(back.clone()));
+        assert!(Node::decode("", &cs).is_none());
+        assert_eq!(
+            Node::decode("20261003T142233Z O    ", &cs).unwrap().text,
+            ""
+        );
+        assert_eq!(
+            Node::decode("20261003T142233Z O    ", &cs).unwrap().origin,
+            "O"
+        );
+        let wider = cols(&["ts", "origin", "agent", "model", "session", "later", "text"]);
+        let line = back.encode(&wider);
+        assert_eq!(line, "20261003T142233Z 7KQ2ZD claude-code  s_1  a b c");
+        assert_eq!(Node::decode(&line, &wider), Some(back));
         assert_eq!(Kind::parse("note"), Some(Kind::Note));
         assert_eq!(Kind::parse("work"), None);
     }

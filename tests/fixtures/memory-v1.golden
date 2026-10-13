@@ -1,0 +1,128 @@
+$ wake
+2020-01-01
+0|imported first note
+1|imported second note, with spaces
+2020-01-02
+2|imported third note
+2020-01-03
+3|imported fourth
+2026-10-13
+4|long note 0 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+5|short note 1 about the widget
+6|short note 2 about the widget
+7|long note 3 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+8|short note 4 about the widget
+9|short note 5 about the widget
+10|long note 6 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+11|short note 7 about the widget
+12|short note 8 about the widget
+13|long note 9 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+14|short note 10 about the widget
+15|short note 11 about the widget
+You are awake. Zoom the marked lines that touch your task before you act.
+$ wake --time -o origin,repo,head,branch,agent,model,session,kind
+2020-01-01
+0|00:00|2RP35K|-|-|-|-|-|-|note|imported first note
+1|00:00|2RP35K|-|-|-|-|-|-|note|imported second note, with spaces
+2020-01-02
+2|00:00|2RP35K|-|-|-|-|-|-|note|imported third note
+2020-01-03
+3|00:00|2RP35K|-|-|-|-|-|-|note|imported fourth
+2026-10-13
+4|23:03|2RP35K|acme/widget|0e553b08ba84|main|claude-code|claude-opus-5-5|sess-0|note|long note 0 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+5|23:03|2RP35K|acme/widget|0e553b08ba84|main|claude-code|claude-opus-5-5|sess-0|note|short note 1 about the widget
+6|23:03|2RP35K|acme/widget|0e553b08ba84|main|claude-code|claude-opus-5-5|sess-0|note|short note 2 about the widget
+7|23:03|2RP35K|acme/widget|0e553b08ba84|main|claude-code|claude-opus-5-5|sess-0|note|long note 3 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+8|23:03|2RP35K|acme/widget|0e553b08ba84|main|claude-code|claude-opus-5-5|sess-1|note|short note 4 about the widget
+9|23:03|2RP35K|acme/widget|0e553b08ba84|main|claude-code|claude-opus-5-5|sess-1|note|short note 5 about the widget
+10|23:03|2RP35K|acme/widget|0e553b08ba84|main|claude-code|claude-opus-5-5|sess-1|note|long note 6 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+11|23:03|2RP35K|acme/widget|0e553b08ba84|main|claude-code|claude-opus-5-5|sess-1|note|short note 7 about the widget
+12|23:03|2RP35K|acme/widget|0e553b08ba84|main|claude-code|claude-opus-5-5|sess-2|note|short note 8 about the widget
+13|23:03|2RP35K|acme/widget|0e553b08ba84|main|claude-code|claude-opus-5-5|sess-2|note|long note 9 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+14|23:03|2RP35K|acme/widget|0e553b08ba84|main|claude-code|claude-opus-5-5|sess-2|note|short note 10 about the widget
+15|23:03|2RP35K|acme/widget|0e553b08ba84|main|claude-code|claude-opus-5-5|sess-2|note|short note 11 about the widget
+You are awake. Zoom the marked lines that touch your task before you act.
+$ zoom 0+16
+2020-01-01
+0+4|..01-03|imported first note imported second note, with spaces imported third note imported fourth
+2026-10-13
+4+4|summary 521aac41
+8+4|short note 4 about the widget short note 5 about the widget long note 6 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww short note 7 about the widget
+12+4|short note 8 about the widget long note 9 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww short note 10 about the widget short note 11 about the widget
+$ zoom 8+8 -o agent,model,session
+2026-10-13
+8+2|claude-code|claude-opus-5-5|sess-1|short note 4 about the widget short note 5 about the widget
+10+2|claude-code|claude-opus-5-5|sess-1|long note 6 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww short note 7 about the widget
+12+2|claude-code|claude-opus-5-5|sess-2|short note 8 about the widget long note 9 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+14+2|claude-code|claude-opus-5-5|sess-2|short note 10 about the widget short note 11 about the widget
+$ zoom 5
+2026-10-13
+5|short note 1 about the widget
+$ grep -t widget
+2026-10-13
+5|short note 1 about the widget
+4+2|long note 0 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww short note 1 about the widget
+6|short note 2 about the widget
+6+2|short note 2 about the widget long note 3 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+8|short note 4 about the widget
+9|short note 5 about the widget
+8+2|short note 4 about the widget short note 5 about the widget
+11|short note 7 about the widget
+10+2|long note 6 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww short note 7 about the widget
+8+4|short note 4 about the widget short note 5 about the widget long note 6 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww short note 7 about the widget
+12|short note 8 about the widget
+12+2|short note 8 about the widget long note 9 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+14|short note 10 about the widget
+15|short note 11 about the widget
+14+2|short note 10 about the widget short note 11 about the widget
+12+4|short note 8 about the widget long note 9 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww short note 10 about the widget short note 11 about the widget
+16 matches.
+$ show 5
+5
+ts      20261013T230303Z
+kind    note
+origin  2RP35K
+repo    acme/widget
+root    -
+head    0e553b08ba84
+branch  main
+agent   claude-code
+model   claude-opus-5-5
+session sess-0
+text    short note 1 about the widget
+$ show 8+8
+8+8
+ts      20261013T230304Z
+origin  2RP35K
+agent   claude-code
+model   sonnet
+session fake-sess
+text    summary eeb75eb6
+$ show 4+4
+4+4
+ts      20261013T230304Z
+origin  2RP35K
+agent   claude-code
+model   sonnet
+session fake-sess
+text    summary 521aac41
+$ show 0+4
+0+4
+ts      20261013T230303Z
+origin  2RP35K
+agent   -
+model   -
+session -
+text    imported first note imported second note, with spaces imported third note imported fourth
+$ config WAKE_LINES=3
+WAKE_LINES   3       how many lines wake prints (96 is about 8k tokens) (default 96)
+ENTRY_CHARS  280     the longest one note may be, in bytes
+PART_CHARS   20000   output paging: largest part, in bytes
+PART_LINES   500     output paging: largest part, in lines
+$ wake -o session
+2020-01-01
+0+8|..2026-10-13|sess-0(+1)|imported first note imported second note, with spaces imported third note imported fourth summary 521aac41
+2026-10-13
+8+4|sess-1|short note 4 about the widget short note 5 about the widget long note 6 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww short note 7 about the widget
+12+4|sess-2|short note 8 about the widget long note 9 wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww short note 10 about the widget short note 11 about the widget
+You are awake. Zoom the marked lines that touch your task before you act.

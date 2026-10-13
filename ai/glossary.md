@@ -1,9 +1,9 @@
 # Glossary
 
 - `memory`: the store `ai memory` manages; one per user per machine, shared by every repo and session, append-only. A bare git repo at `~/.ai/memory` (override `AI_MEMORY_DIR`); all data lives as objects under `refs/ai/memory`, one commit per mutation. It is also the log of `ai chat`: one store.
-- `message`: one entry of the log, with a `kind`; its blob is `log/<hi>/<lo>`: header `ts kind origin repo head branch agent model session`, then the text. Ids are positions `0, 1, …`, permanent.
+- `message`: one entry of the log, with a `kind`; its blob is `log/<hi>/<lo>`: `key value` header lines (`ts kind origin repo root head branch agent model session`, empty ones left out), a blank line, then the text. Ids are positions `0, 1, …`, permanent.
 - `kind`: `user` (the user's words), `talk` (the agent's replies), `tool` (its tool calls), `echo` (tool results), `note` (`ai memory note`, `import`).
-- `node`: one summary line of the tree, ≤ ~512 bytes (`NODE`). `(l, i)` covers messages `[i·2^l, (i+1)·2^l)`; level 0 summarizes one message, level `l` merges its two children. Stored one per line (`ts origin agent model session text`) in `tree/<l>/<hi>/<lo>` segments of 256.
+- `node`: one summary line of the tree, ≤ ~512 bytes (`NODE`). `(l, i)` covers messages `[i·2^l, (i+1)·2^l)`; level 0 summarizes one message, level `l` merges its two children. Stored one per line in `tree/<l>/<hi>/<lo>` segments of 256, under a column row (`ts origin agent model session text`).
 - `id+n`: how a node is named: first message `id`, `n = 2^l` messages. One message is a bare `id`; `zoom` and `show` take either.
 - `free node`: a source that fits `NODE` is its own node, no model call: a short message (`kind: text`), or two lines joined. Built in the same commit that completes its sources.
 - `view`: the nodes tiling `[0, T)`, oldest first, under `VIEW` = 128,000 bytes; grows by appending and merging the most due pair, never splits; folded again from message 0 at load. `wake` prints it; it is what `ai chat` sends each turn.
@@ -28,3 +28,6 @@
 - `knob`: a per-machine size in the memory repo's git config, set with `ai memory config NAME=VALUE`: `ENTRY_CHARS`, `PART_CHARS`, `PART_LINES`.
 - `provenance`: origin of a data item: who/what produced it, when, from which session, model and commit.
 - `attribution`: authorship of work (code, files) as AI-generated, AI-assisted or human.
+- `format`: the store's format number, the `format` blob at the tree root (absent: 1). This ai reads and writes only its own (`FORMAT`); it refuses a newer store and upgrades an older one.
+- `upgrade`: the pure, automatic rewrite of an older-format store to `FORMAT`, one commit `upgrade format N -> M` on the old head under the compactor's lock; the old head is the rollback.
+- `root`: a note's repo identity: the first commit of the repo's default branch, cached per clone as `ai.root` in its git config.

@@ -21,7 +21,7 @@ use crate::memory::{
     grep::{Grep, grep},
     hook::{REMINDED, hook},
     log,
-    meta::{Line, Meta, dated, parts},
+    meta::{Line, Meta, dash, dated, parts},
     prov,
     record::{Kind, Message, Place, Who, midnight},
     stats::{Stats, stats},
@@ -245,9 +245,11 @@ impl Cli {
             return init(dir, out);
         }
         let s = Store::open(dir)?;
-        let place = std::env::current_dir()
-            .map(|cwd| prov::place(&cwd))
-            .unwrap_or_default();
+        let cwd = std::env::current_dir().ok();
+        let mut place = cwd.as_deref().map(prov::place).unwrap_or_default();
+        if let (Command::Note { .. }, Some(cwd)) = (&self.command, &cwd) {
+            place.root = prov::root(cwd);
+        }
         let mut who = prov::env_who();
         let (cmd, mut args) = self.command.typed();
         let mut out = Tally::new(out);
@@ -587,38 +589,44 @@ fn zoom_cmd(
 
 fn show(s: &Snapshot, out: &mut dyn Write, id: &str) -> Result<ExitCode> {
     let c = line_id(id, s.log_len()?)?;
-    let fields: Vec<(&str, String)> = if c.l == 0 {
+    let (fields, text): (Vec<(&str, String)>, String) = if c.l == 0 {
         let m = s.message(c.i)?;
         let (p, w) = (m.place, m.who);
-        vec![
-            ("ts", m.ts),
-            ("kind", m.kind.name().into()),
-            ("origin", m.origin),
-            ("repo", p.repo),
-            ("head", p.head),
-            ("branch", p.branch),
-            ("agent", w.agent),
-            ("model", w.model),
-            ("session", w.session),
-            ("text", m.text),
-        ]
+        (
+            vec![
+                ("ts", m.ts),
+                ("kind", m.kind.name().into()),
+                ("origin", m.origin),
+                ("repo", p.repo),
+                ("root", p.root),
+                ("head", p.head),
+                ("branch", p.branch),
+                ("agent", w.agent),
+                ("model", w.model),
+                ("session", w.session),
+            ],
+            m.text,
+        )
     } else {
         let Some(n) = s.node(c)? else {
             bail!("{c} is not summarized yet. Run: {ME} zoom {c}");
         };
-        vec![
-            ("ts", n.ts),
-            ("origin", n.origin),
-            ("agent", n.who.agent),
-            ("model", n.who.model),
-            ("session", n.who.session),
-            ("text", n.text),
-        ]
+        (
+            vec![
+                ("ts", n.ts),
+                ("origin", n.origin),
+                ("agent", n.who.agent),
+                ("model", n.who.model),
+                ("session", n.who.session),
+            ],
+            n.text,
+        )
     };
     writeln!(out, "{c}")?;
     for (k, v) in fields {
-        writeln!(out, "{k:<8}{v}")?;
+        writeln!(out, "{k:<8}{}", dash(&v))?;
     }
+    writeln!(out, "text    {text}")?;
     Ok(ExitCode::SUCCESS)
 }
 

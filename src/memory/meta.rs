@@ -9,6 +9,7 @@ use crate::memory::{record::Message, store::Snapshot, tree::Coord};
 pub enum Field {
     Origin,
     Repo,
+    Root,
     Head,
     Branch,
     Agent,
@@ -22,6 +23,7 @@ impl Field {
         match self {
             Field::Origin => "origin",
             Field::Repo => "repo",
+            Field::Root => "root",
             Field::Head => "head",
             Field::Branch => "branch",
             Field::Agent => "agent",
@@ -35,6 +37,7 @@ impl Field {
         match self {
             Field::Origin => &m.origin,
             Field::Repo => &m.place.repo,
+            Field::Root => &m.place.root,
             Field::Head => &m.place.head,
             Field::Branch => &m.place.branch,
             Field::Agent => &m.who.agent,
@@ -59,6 +62,11 @@ pub struct Meta {
         help = "add these fields; mixed values show as the commonest and (+k) others"
     )]
     pub fields: Vec<Field>,
+}
+
+/// How an empty field shows.
+pub fn dash(v: &str) -> &str {
+    if v.is_empty() { "-" } else { v }
 }
 
 pub fn date(ts: &str) -> String {
@@ -172,7 +180,7 @@ impl Meta {
         let fields = self
             .fields
             .iter()
-            .map(|f| values(ms.iter().map(|m| f.of(m))));
+            .map(|f| values(ms.iter().map(|m| dash(f.of(m)))));
         for col in range(&a.ts, &b.ts, self.time).into_iter().chain(fields) {
             s += &col;
             s.push('|');

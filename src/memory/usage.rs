@@ -6,7 +6,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::memory::record::{Place, Who, now};
+use crate::memory::{
+    meta,
+    record::{Place, Who, now},
+};
 
 pub const USAGE_LOG: &str = "usage.jsonl";
 const TAIL: u64 = 1 << 20;
@@ -30,7 +33,7 @@ pub struct Use {
 }
 
 fn dash(v: &str) -> String {
-    if v.is_empty() { "-".into() } else { v.into() }
+    meta::dash(v).into()
 }
 
 impl Use {

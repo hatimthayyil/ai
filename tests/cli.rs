@@ -301,7 +301,7 @@ fn provenance_comes_from_the_cwd_and_env() {
             b.place.head.as_str(),
             b.place.branch.as_str()
         ),
-        ("-", "-", "-")
+        ("", "", "")
     );
     assert_eq!(
         (
@@ -309,7 +309,17 @@ fn provenance_comes_from_the_cwd_and_env() {
             b.who.model.as_str(),
             b.who.session.as_str()
         ),
-        ("pi", "-", "s2")
+        ("pi", "", "s2")
+    );
+    let root = s.git(&work, &["rev-list", "--max-parents=0", "HEAD"]);
+    assert_eq!(
+        (a.place.root.as_str(), b.place.root.as_str()),
+        (root.as_str(), "")
+    );
+    assert_eq!(
+        s.git(&work, &["config", "ai.root"]),
+        root,
+        "cached per clone"
     );
     assert!(a.ts.len() == 16 && a.ts.ends_with('Z') && a.ts <= b.ts);
 
@@ -325,6 +335,7 @@ fn provenance_comes_from_the_cwd_and_env() {
         "kind    note\n".into(),
         format!("origin  {}\n", a.origin),
         "repo    acme/widget\n".into(),
+        format!("root    {root}\n"),
         format!("head    {head}\n"),
         "branch  trunk\n".into(),
         "agent   claude-code\n".into(),
@@ -394,7 +405,7 @@ fn every_mutation_is_one_named_commit() {
     );
     assert_eq!(
         s.store_git(&["ls-tree", "-r", "--name-only", REF]),
-        "log/0000/00\nlog/0000/01\ntree/0/0000/00\ntree/1/0000/00"
+        "format\nlog/0000/00\nlog/0000/01\ntree/0/0000/00\ntree/1/0000/00"
     );
     assert_eq!(s.store_git(&["for-each-ref", "--format=%(refname)"]), REF);
     s.store_git(&["fsck", "--strict", "--no-dangling"]);
@@ -420,7 +431,7 @@ fn listing(root: &Path, skip: &Path) -> BTreeMap<PathBuf, (u64, SystemTime)> {
 }
 
 #[test]
-fn nothing_is_written_outside_the_store() {
+fn nothing_is_written_outside_the_store_but_the_root_cache() {
     let s = Sandbox::new();
     let work = s.path().join("work");
     fs::create_dir(&work).unwrap();
@@ -448,7 +459,18 @@ fn nothing_is_written_outside_the_store() {
             text(&r.stderr)
         );
     }
-    assert_eq!(listing(s.path(), &d), before);
+    let cached = [work.join(".git"), work.join(".git/config")];
+    let outside = |mut l: BTreeMap<PathBuf, _>| {
+        l.retain(|p, _| !cached.contains(p));
+        l
+    };
+    assert_eq!(outside(listing(s.path(), &d)), outside(before));
+    let root = s.git(&work, &["rev-list", "--max-parents=0", "HEAD"]);
+    assert_eq!(
+        s.git(&work, &["config", "ai.root"]),
+        root,
+        "a note caches its repo's root"
+    );
     let mut top: Vec<_> = fs::read_dir(&d)
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
@@ -544,7 +566,7 @@ fn every_command_logs_one_usage_line() {
     assert!(log[0].get("error").is_none());
     assert_eq!(log[1]["lines"], 1);
     assert_eq!(log[1]["bytes"], "Saved as 0.\n".len());
-    assert_eq!(log[6]["lines"], 11);
+    assert_eq!(log[6]["lines"], 12);
     assert_eq!(log[4]["bytes"], 0);
     for (k, v) in [
         ("agent", "pi"),
@@ -1026,4 +1048,211 @@ fn sigterm_ends_the_tui_idle_priming_or_in_a_turn_and_restores_the_terminal() {
         t.until("\x1b[?2004l");
         assert!(t.exits().success(), "{wait:?}");
     }
+}
+
+const V1: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/memory-v1.bundle"
+);
+const V1_GOLDEN: &str = include_str!("fixtures/memory-v1.golden");
+
+impl Sandbox {
+    /// The format-1 fixture, written by ai 0.7.0, as this sandbox's store; its head.
+    fn v1_store(&self) -> String {
+        let d = self.store();
+        self.git(self.path(), &["init", "-q", "--bare", d.to_str().unwrap()]);
+        self.store_git(&["fetch", "-q", V1, &format!("{REF}:{REF}")]);
+        self.store_git(&["rev-parse", REF])
+    }
+
+    /// `git` on the store, fed `input`.
+    fn store_git_in(&self, args: &[&str], input: &str) -> String {
+        let mut c = Command::new("git");
+        self.isolate(&mut c);
+        let mut kid = c
+            .arg(format!("--git-dir={}", self.store().display()))
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        std::io::Write::write_all(&mut kid.stdin.take().unwrap(), input.as_bytes()).unwrap();
+        text(&kid.wait_with_output().unwrap().stdout)
+            .trim_end()
+            .to_string()
+    }
+
+    /// The commits on the memory ref, newest first.
+    fn commits(&self) -> Vec<String> {
+        let log = self.store_git(&["log", "--format=%H %s", REF]);
+        log.lines().map(String::from).collect()
+    }
+}
+
+/// The golden commands and their output, in order.
+fn v1_golden() -> Vec<(Vec<&'static str>, String)> {
+    let mut out: Vec<(Vec<&str>, String)> = Vec::new();
+    for line in V1_GOLDEN.split_inclusive('\n') {
+        match line.strip_prefix("$ ") {
+            Some(cmd) => out.push((cmd.trim_end().split(' ').collect(), String::new())),
+            None => out.last_mut().unwrap().1 += line,
+        }
+    }
+    out
+}
+
+fn upgraded(head: &str) -> String {
+    format!("Upgraded memory to format 2; previous state is commit {head}.\n")
+}
+
+#[test]
+fn a_format_1_store_upgrades_once_and_reads_as_before() {
+    let s = Sandbox::new();
+    let old = s.v1_store();
+    let golden = v1_golden();
+    let (args, want) = &golden[0];
+    let r = s.ai(args);
+    assert_eq!(text(&r.stderr), upgraded(&old));
+    assert_eq!((r.status.success(), text(&r.stdout)), (true, want.clone()));
+    let commits = s.commits();
+    assert_eq!(commits.len(), 16);
+    let new = commits[0].split_once(' ').unwrap();
+    assert_eq!(new.1, "upgrade format 1 -> 2");
+    assert_eq!(s.store_git(&["rev-parse", &format!("{REF}^")]), old);
+    assert_eq!(s.store_git(&["show", &format!("{REF}:format")]), "2");
+
+    for (args, want) in &golden[1..] {
+        let r = s.ai(args);
+        assert!(
+            r.status.success() && text(&r.stderr).is_empty(),
+            "{args:?}: {}",
+            text(&r.stderr)
+        );
+        assert_eq!(text(&r.stdout), *want, "{args:?}");
+    }
+    assert_eq!(
+        s.commits()[0],
+        commits[0],
+        "a reopened store is not upgraded again"
+    );
+
+    let paths = s.store_git(&["ls-tree", "-r", "--name-only", &old]);
+    assert_eq!(
+        s.store_git(&["ls-tree", "-r", "--name-only", REF]),
+        format!("format\n{paths}")
+    );
+    let blob = |rev: &str, p: &str| s.store_git(&["cat-file", "blob", &format!("{rev}:{p}")]);
+    let ms = s.memories();
+    let mut nodes = 0;
+    for p in paths.lines() {
+        let (was, is) = (blob(&old, p), blob(REF, p));
+        if let Some(n) = p.strip_prefix("log/") {
+            let i = usize::from_str_radix(&n.replace('/', ""), 16).unwrap();
+            assert_eq!(ms[i].text, was.split_once('\n').unwrap().1, "message {i}");
+            assert!(is.ends_with(&format!("\n\n{}", ms[i].text)));
+            continue;
+        }
+        let (cols, lines) = is.split_once('\n').unwrap();
+        assert_eq!(cols, "ts origin agent model session text");
+        let text = |l: &str| l.splitn(6, ' ').nth(5).map(String::from);
+        let (was, is): (Vec<_>, Vec<_>) = (
+            was.lines().map(text).collect(),
+            lines.lines().map(text).collect(),
+        );
+        assert_eq!(was, is, "{p}");
+        nodes += was.len();
+    }
+    assert_eq!((ms.len(), nodes), (16, 31));
+}
+
+#[test]
+fn concurrent_opens_upgrade_once() {
+    let s = Sandbox::new();
+    let old = s.v1_store();
+    let want = v1_golden().remove(0).1;
+    let kids: Vec<_> = (0..8)
+        .map(|_| {
+            s.cmd(s.path(), Some(&s.store()))
+                .arg("wake")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    let mut told = 0;
+    for k in kids {
+        let r = k.wait_with_output().unwrap();
+        assert_eq!((r.status.success(), text(&r.stdout)), (true, want.clone()));
+        let err = text(&r.stderr);
+        told += err.matches(&upgraded(&old)).count();
+        let rest = err.replace(&upgraded(&old), "");
+        assert!(rest.lines().all(|l| l.starts_with("Waiting for")), "{err}");
+    }
+    assert_eq!(told, 1);
+    let ups = s
+        .commits()
+        .iter()
+        .filter(|c| c.ends_with(" upgrade format 1 -> 2"))
+        .count();
+    assert_eq!(ups, 1);
+}
+
+#[test]
+fn a_newer_format_is_refused_before_any_write() {
+    let s = Sandbox::new();
+    assert!(s.ai(&["init"]).status.success());
+    assert!(s.ai(&["note", "written by this ai"]).status.success());
+    let tree = s.store_git(&["ls-tree", REF]);
+    let blob = s.store_git_in(&["hash-object", "-w", "--stdin"], "3\n");
+    let entries: String = tree
+        .lines()
+        .map(|l| match l.ends_with("\tformat") {
+            true => format!("100644 blob {blob}\tformat\n"),
+            false => format!("{l}\n"),
+        })
+        .collect();
+    let tree = s.store_git_in(&["mktree"], &entries);
+    let commit = s.store_git(&["commit-tree", "-p", REF, "-m", "from a newer ai", &tree]);
+    s.store_git(&["update-ref", REF, &commit]);
+    for args in [
+        &["note", "x"][..],
+        &["wake"],
+        &["nap"],
+        &["show", "0"],
+        &["init"],
+    ] {
+        let r = s.ai(args);
+        assert_eq!(
+            (r.status.success(), text(&r.stderr).as_str()),
+            (
+                false,
+                "This memory is format 3; this ai reads up to 2. Upgrade ai.\n"
+            ),
+            "{args:?}"
+        );
+    }
+    assert_eq!(s.store_git(&["rev-parse", REF]), commit);
+}
+
+#[test]
+fn the_root_is_the_default_branchs_first_commit() {
+    let s = Sandbox::new();
+    assert!(s.ai(&["init"]).status.success());
+    let work = s.path().join("work");
+    fs::create_dir(&work).unwrap();
+    s.git(&work, &["init", "-q", "-b", "main"]);
+    s.git(&work, &["commit", "-q", "--allow-empty", "-m", "first"]);
+    let root = s.git(&work, &["rev-parse", "HEAD"]);
+    s.git(&work, &["commit", "-q", "--allow-empty", "-m", "second"]);
+    s.git(&work, &["checkout", "-q", "--orphan", "side"]);
+    s.git(&work, &["commit", "-q", "--allow-empty", "-m", "unrelated"]);
+    let r = s
+        .cmd(&work, Some(&s.store()))
+        .args(["note", "on a side branch"])
+        .output()
+        .unwrap();
+    assert!(r.status.success(), "{}", text(&r.stderr));
+    assert_eq!(s.memories()[0].place.root, root);
+    assert_eq!(s.memories()[0].place.branch, "side");
 }

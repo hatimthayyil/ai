@@ -26,7 +26,7 @@ ai memory zoom <id>             # open a line of the view
 ai memory grep <regex>          # search every message
 ```
 
-`ai` stores memories in `~/.ai/memory`, or in `$AI_MEMORY_DIR` if you set it.
+`ai` stores memories in `~/.ai/memory`, or in `$AI_MEMORY_DIR` if you set it. A newer `ai` upgrades the memory on first use and prints the commit holding its previous state; older releases then fail on it without writing.
 
 ## Credits
 

@@ -72,10 +72,11 @@ Format bumps: removing a field, changing a field's meaning or encoding, moving p
 
 ### Published binaries fail closed
 
-0.6.3 and 0.7.0 check no format; both pin gix 0.88.0. Every data command in them goes through `Snapshot::log_len`, which reads the `log` tree.
+0.6.3 and 0.7.0 check no format; both pin gix 0.88.0. Old binaries may break on a format-2 store; they must not write to it.
 
-- Format 2 moves messages to `messages/` and writes a blob named `log` reading `format 2: upgrade ai`. An old binary then fails every command with gix's "Object named log was supposed to be of kind tree, but was kind blob", before any write. The path `log` stays reserved in every later format.
-- Second barrier: an old append decodes the previous message first, and its decoder rejects named headers.
+- The barrier is the format-2 encoding. The old decoder rejects named headers, and every old write decodes a message first: `note` and `import` the previous message, `nap` message 0 (an old reader takes the segment's column row for node 0, so node `(l, 0)` looks unbuilt at every level and its first job is leaf 0). Verified with 0.7.0 per command; the table is in `ai/comments/src/memory/upgrade/mod.rs.md`.
+- An old compactor running at upgrade time holds the compactor's lock; the upgrade waits for it.
+- Messages stay at `log/`: the name describes the structure (append-only, position is id) and pairs with `tree/`.
 - Git's repository format is no lever. gix 0.88 refuses `repositoryformatversion` 2 before any open option applies, locking out the new binary and plain `git` alike. Version 1 with an unknown `extensions.*` key is ignored by gix and refused by plain `git`.
 
 ### `root` and `ai memory link`
@@ -98,7 +99,7 @@ A format bump ships as a minor version (0.8.0), with the upgrade and rollback in
 
 ## Scope of the first release
 
-Format blob and check, named headers, upgrader 1 -> 2 (messages to `messages/`, `log` tombstone), fixtures, a test running 0.7.0 against an upgraded store, `root` on new notes. Next: `ai memory link`, line markers, the "last note in this repo" line.
+Format blob and check, named headers, upgrader 1 -> 2, fixtures, a test running 0.7.0 against an upgraded store, `root` on new notes. Next: `ai memory link`, line markers, the "last note in this repo" line.
 
 ## Open
 

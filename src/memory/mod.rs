@@ -13,6 +13,7 @@ mod record;
 mod stats;
 mod store;
 mod tree;
+mod upgrade;
 mod usage;
 mod view;
 mod zoom;

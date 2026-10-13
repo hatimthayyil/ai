@@ -7,7 +7,7 @@ use jiff::{ToSpan, civil::Date, tz::TimeZone};
 use crate::memory::{
     cli::plural,
     hook::{PERIODIC, REMINDED},
-    meta::date,
+    meta::{dash, date},
     record::{Kind, midnight},
     store::Snapshot,
     usage::{self, Use},
@@ -169,9 +169,9 @@ pub fn stats(s: &Snapshot, dir: &Path, out: &mut dyn Write, st: &Stats) -> Resul
             calls.push(Call {
                 ts: m.ts,
                 cmd: 1,
-                agent: m.who.agent,
-                repo: m.place.repo,
-                session: m.who.session,
+                agent: dash(&m.who.agent).into(),
+                repo: dash(&m.place.repo).into(),
+                session: dash(&m.who.session).into(),
             });
         }
         Ok(())
