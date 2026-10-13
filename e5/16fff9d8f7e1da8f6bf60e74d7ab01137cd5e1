@@ -1,0 +1,116 @@
+tests/cli.rs
+  s_69b2c08bdc5447::t_a99c17259031e8 304,312-314,338,408,569
+  s_69b2c08bdc5447::t_cbd6ddf9cc53ac 434
+  s_69b2c08bdc5447::t_1f9472f078a8d9 1052,1057-1067,1085-1092,1102-1115,1117,1119-1125,1131-1132,1138-1148,1151-1157,1162-1171,1173-1185,1187-1192,1198-1206,1208-1214,1216-1217,1225-1227,1232-1236
+  s_69b2c08bdc5447::t_c98e42c7f6093c 1118
+  s_69b2c08bdc5447::t_91f4665fe1e600 1149-1150
+  s_69b2c08bdc5447::t_49d71b9e82dd7c 1116,1172,1186
+  s_69b2c08bdc5447::t_e1c277889da591 462-468
+  s_69b2c08bdc5447::t_b8ecdd98d5bbc7 1093-1101
+  s_69b2c08bdc5447::t_191ac0c265fa01 1237-1258
+  s_69b2c08bdc5447::t_3c22c8c8d8c8fc 1068-1079,1083-1084,1207,1215
+  s_69b2c08bdc5447::t_4a5aeb6ea7b06f 315-322,469-473,1053-1056,1080-1082,1126-1130,1133-1137,1158-1161,1193-1197,1218-1224,1228-1231
+ai/comments/src/memory/upgrade/mod.rs.md
+  s_69b2c08bdc5447::t_d241b8197cddf2 1-32
+src/memory/stats.rs
+  s_69b2c08bdc5447::t_ddb11cc27c2a39 10
+  s_69b2c08bdc5447::t_8be2f6028f0656 172-174
+ai/comments/src/memory/prov.rs.md
+  s_69b2c08bdc5447::t_d241b8197cddf2 3,7,9,11
+src/memory/upgrade/mod.rs
+  s_69b2c08bdc5447::t_4a5aeb6ea7b06f 22-25
+  s_69b2c08bdc5447::t_05fcc91da815da 1-21,26-49
+ai/comments/tests/cli.rs.md
+  s_69b2c08bdc5447::t_40cc841b9f61d2 15-21
+src/memory/upgrade/v1.rs
+  s_69b2c08bdc5447::t_4a5aeb6ea7b06f 75-76
+  s_69b2c08bdc5447::t_05fcc91da815da 1-74,77-89
+src/memory/prov.rs
+  s_69b2c08bdc5447::t_2d2b796a017cae 7,9-14,43-65,75-83
+  s_69b2c08bdc5447::t_4a5aeb6ea7b06f 66-74
+  s_69b2c08bdc5447::t_09b95b745ccd73 84
+  s_69b2c08bdc5447::t_796bd6e94ca504 29
+src/memory/cli.rs
+  s_69b2c08bdc5447::t_11666ea8e5529b 24,592,627,629
+  s_69b2c08bdc5447::t_4e0ef902043c6e 248-252
+  s_69b2c08bdc5447::t_4a5aeb6ea7b06f 595-609,614-623
+ai/research/20261013T224252---record-versioning.md
+  s_69b2c08bdc5447::t_4f36377e6af3cc 75,77-79
+  s_69b2c08bdc5447::t_9385e874e66f3a 102
+ai/comments/src/memory/upgrade/v1.rs.md
+  s_69b2c08bdc5447::t_d241b8197cddf2 1-7
+README.md
+  s_69b2c08bdc5447::t_fd9ffd3f9bb697 29
+Cargo.lock
+  s_77b04d9838f161::t_a6660d346a20ca 22
+src/memory/store.rs
+  s_69b2c08bdc5447::t_844635683c51a2 227
+  s_69b2c08bdc5447::t_8d0a0aca487a99 278,280,287,289-292
+  s_69b2c08bdc5447::t_125e733172ded0 507-509
+  s_69b2c08bdc5447::t_91584cad8faa03 4-5,25,27,35-36
+  s_77b04d9838f161::t_c3e2aaddf97b4a 281-286,288
+  s_69b2c08bdc5447::t_93cf2914a54ee5 226,584-591,597,630-632,685,692-693,698
+  s_69b2c08bdc5447::t_4a5aeb6ea7b06f 75-78,193-196,445-447,541-546,633-634
+  s_69b2c08bdc5447::t_1fd94305960388 405,422,424-425,432,444,448-449,451
+  s_69b2c08bdc5447::t_3d7758de7da323 74,79-88
+  s_69b2c08bdc5447::t_d0de8b65724c84 164,169-170,174-186,188-192,197-225
+  s_69b2c08bdc5447::t_b8ecdd98d5bbc7 171-173,187
+  s_69b2c08bdc5447::t_23d4e614f6efb2 324-334,339-342,344
+  s_69b2c08bdc5447::t_73c0692986fb48 362
+  s_69b2c08bdc5447::t_d73591156c4a74 516-540,547-567
+ai/comments/src/memory/meta.rs.md
+  s_69b2c08bdc5447::t_d241b8197cddf2 9
+src/memory/mod.rs
+  s_69b2c08bdc5447::t_93cf2914a54ee5 16
+src/memory/meta.rs
+  s_69b2c08bdc5447::t_11666ea8e5529b 12,26,40,67-71,183
+src/memory/usage.rs
+  s_69b2c08bdc5447::t_8be2f6028f0656 9-12
+  s_69b2c08bdc5447::t_11666ea8e5529b 36
+ai/comments/src/memory/compact.rs.md
+  s_69b2c08bdc5447::t_d241b8197cddf2 9
+src/memory/compact.rs
+  s_69b2c08bdc5447::t_ddb11cc27c2a39 4,21,206-208
+ai/glossary.md
+  s_69b2c08bdc5447::t_40cc841b9f61d2 4,6,31-33
+ai/comments/src/memory/record.rs.md
+  s_69b2c08bdc5447::t_49995cf4dc893f 4,7,9-10
+tests/fixtures/memory-v1.golden
+  s_69b2c08bdc5447::t_827f91f58c2fef 117-121
+  s_69b2c08bdc5447::t_d5e723c097fdbe 1-116,122-128
+tests/memory.rs
+  s_69b2c08bdc5447::t_96b3570e757ea0 1029
+  s_69b2c08bdc5447::t_e657d158135d9d 373
+  s_69b2c08bdc5447::t_4a5aeb6ea7b06f 405-409,735-741,789-792
+ai/comments/src/memory/store.rs.md
+  s_69b2c08bdc5447::t_49995cf4dc893f 5,10,15-19
+Cargo.toml
+  s_69b2c08bdc5447::t_bb9275e828a1cd 3
+src/memory/record.rs
+  s_69b2c08bdc5447::t_0e0c604a1aefbf 39,61,69-72,74,76,84,101-117,120-138,141,145-163,166,198-208,211-236,263,272,280-284,293,298,306-308,313-324,330-338,349-352,359-362,371-374
+  s_69b2c08bdc5447::t_4a5aeb6ea7b06f 179-183,288-291,294-297,309-312,325-329,353-358,363-366,368-369
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e516fff9d8f7e1da8f6bf60e74d7ab01137cd5e1",
+  "prompts": {},
+  "sessions": {
+    "s_69b2c08bdc5447": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32dcb4ea-49f5-4f17-8f64-ee7d735686d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Hatim Thayyil <hatim@thayyil.net>"
+    },
+    "s_77b04d9838f161": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "799603ff-89ac-4e8a-9cfb-a9648c74f1fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Hatim Thayyil <hatim@thayyil.net>"
+    }
+  }
+}
