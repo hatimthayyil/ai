@@ -1,0 +1,21 @@
+ai/research/20261013T222521---notes-design.md
+  s_8ea1649a2e72b0::t_547b12526ee170 1-65
+ai/research/20261013T222410---notes-prior-art.md
+  s_8ea1649a2e72b0::t_2064f022b42afc 1-140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bdce6958d431ddb03f90d981b7f7e05461e53144",
+  "prompts": {},
+  "sessions": {
+    "s_8ea1649a2e72b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "79b45b42-017d-4f12-bce4-ae33301d422a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Hatim Thayyil <hatim@thayyil.net>"
+    }
+  }
+}
