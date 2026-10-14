@@ -37,3 +37,10 @@
 - `exchange`: a user message or work item and the steps that answer it, up to the next one on the branch; closed once one follows.
 - `human prompt`: a user entry that opens an exchange: one the user typed or sent (mid-run included) or a subagent's task. Tool results, hook context, `isMeta` entries, local commands and their output, task notifications are not.
 - `work`: an item that is a message from another agent, with its sender: a subagent's hand-back, a peer's report, a coordinator's instruction. It opens an exchange (OptChat's name).
+- `thread`: a named, repo-local `ai chat` conversation: one ref `refs/ai/chat/<name>` in the repository's common git dir, so its worktrees share it. Holds items, bindings and lines; one commit per mutation; format 1.
+- `sequence number`: an item's position in its thread, from 0, permanent. Parents and line keys are sequence numbers. A subagent's items are numbered apart, beside the main tree.
+- `binding`: a harness session's record in a thread (`sessions/<harness>/<session>`): transcript path, graft, tip, attach and detach times. Attached until detached; a session is attached to at most one thread of a repository.
+- `graft`: the item a session's roots hang on: the thread's newest item when the session was first attached; none on a new thread.
+- `tip` (of a session): the item of its transcript's newest entry, the end of its branch.
+- `line` (chat): a summary in a thread, keyed by its level and the last item it covers (`level@last`), of kind chunk, exchange or node; written once.
+- `sync` (chat): ingest an attached session's new entries into its thread in one commit, none if nothing is new; an unattached session is reported as such.

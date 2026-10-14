@@ -94,16 +94,24 @@ impl Tree {
         (0..self.items.len()).filter(|&i| self.tips[i]).collect()
     }
 
-    /// The items from the root down to `tip`.
-    pub fn path(&self, tip: usize) -> Vec<&Item> {
+    /// The positions from the root down to `tip`.
+    pub fn branch(&self, tip: usize) -> Vec<usize> {
         let mut out = Vec::new();
         let mut at = Some(tip);
         while let Some(i) = at {
-            out.push(&self.items[i]);
+            out.push(i);
             at = self.parents[i];
         }
         out.reverse();
         out
+    }
+
+    /// The items from the root down to `tip`.
+    pub fn path(&self, tip: usize) -> Vec<&Item> {
+        self.branch(tip)
+            .into_iter()
+            .map(|i| &self.items[i])
+            .collect()
     }
 }
 
@@ -210,6 +218,7 @@ mod tests {
         ]));
         assert_eq!(tree.tips(), [3, 5, 6, 7, 8]);
         assert_eq!(entries(&tree.path(3)), ["u1", "t1", "u2", "t2"]);
+        assert_eq!(tree.branch(5), [0, 1, 4, 5]);
         assert_eq!(entries(&tree.path(5)), ["u1", "t1", "u2b", "t3"]);
         assert_eq!(entries(&tree.path(6)), ["x"]);
         assert_eq!(entries(&tree.path(7)), ["y"], "a parent must come first");
