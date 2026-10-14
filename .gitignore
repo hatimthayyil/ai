@@ -17,3 +17,4 @@ devenv.local.yaml
 
 # Claude Code
 /.claude/
+/plugins/claude/.claude-plugin/types/
