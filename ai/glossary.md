@@ -35,3 +35,4 @@
 - `branch`: the items from a root of the item tree to one tip. Rewinds, edits and two sessions on one thread add branches; nothing is removed.
 - `step`: an assistant text, if any, and the tool calls and results after it, up to the next assistant text.
 - `exchange`: a user message and the steps that answer it, up to the next user message on the branch; closed once one follows.
+- `human prompt`: a user entry that opens an exchange: one the user typed or sent (mid-run included) or a subagent's task. Tool results, hook context, `isMeta` entries, local commands and their output, task notifications are not.

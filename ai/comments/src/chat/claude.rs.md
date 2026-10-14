@@ -1,0 +1,26 @@
+# chat/claude.rs
+
+Claude Code transcripts to items. Format: `ai/research/20261014T001824---claude-code-sessions-hooks.md` §1; rules checked read-only with jq on the user's logs (2.1.220 to 2.1.299, 206 transcripts, 132 subagents).
+
+Reading
+- Only lines with a `uuid` (user, assistant, attachment, system, and any new type that has one) join the chain; uuid-less metadata lines and unparseable lines are skipped. A line without its newline is being written: `read` and `parse` stop before it, so the next read sees it whole.
+- Parsing depends only on earlier lines, so a longer file gives the same items plus new ones (test `a_growing_file_only_adds_items`). The store can re-read the whole file and keep only new source ids. A repeated uuid keeps its first line.
+- Session: the caller's id goes on every item, subagents included (their lines carry the parent's `sessionId`). Claude Code uuids are unique across sessions and a fork copies them with a new `sessionId`, so `(harness, entry)` alone identifies an entry.
+
+What becomes an item
+- Assistant: one item per `text` (non-blank) or `tool_use` block. Thinking and `<synthetic>` entries (local notices such as "No response requested.") are dropped. Entries hold one block each today; several blocks give several items.
+- User, in order: `isCompactSummary` → `Summary` marker; `isMeta` → dropped (caveats, skill bodies, peer and coordinator messages); `tool_result` blocks → results (text joined, images `[image]`), and text beside them is the user's words typed mid-run (2.1.247 and older); a prompt → user message; `[Request interrupted by user…` → `Interrupt` marker; anything else (local `/commands` and their stdout, `!` bash input and output, task notifications, the `/compact` echo) → dropped.
+- Prompt: `origin.kind` human, `promptSource` sdk, a `<command-message>` prompt command (rendered `/name args`; older versions have no `origin`), or a subagent's first entry (sidechain, no parent: its task). Local commands start with `<command-name>` and are not prompts.
+- Attachment `queued_command` with `commandMode` prompt and a human or absent origin: the user's mid-run message (2.1.224 and newer). Other attachments (hook context, file re-reads, listings, reminders) are dropped.
+- System `compact_boundary` → `Compaction` marker. Other system subtypes are dropped.
+- Item ids: the uuid for an entry's first item, `uuid.k` for item `k`.
+
+Logical parents
+- An item hangs on the nearest item above its entry, walking `parentUuid` (or `logicalParentUuid`, which a compact boundary carries with a null parent) through dropped entries. The chain thus continues across compaction; the boundary's preserved segment needs nothing, since its entries are already earlier in the file.
+- A parent uuid never written to the file (2.1.241 and older reference unpersisted entries, ~730 in one file) means the previous chain line. A null parent is a root.
+- Tool results: Claude Code chains parallel calls (call 2 on call 1) and hangs each result on its own call, so a plain walk drops all but the last result. A result is attached by `tool_use_id` to the newest item under its call (`tip`), so calls and results form one line in write order, whatever order the results arrive in.
+- Any other item whose anchor already has a tool result below it continues after the last result (`settle`): the next assistant turn, and a prompt hung on an interrupted call. Only a user or assistant entry on an older parent then makes a branch. On the user's logs every branch starts at a user message (141; one at an interrupt marker).
+
+Subagents and discovery
+- `subagents`: `<session>/subagents/agent-<id>.jsonl`, read like a session, with `agentType`, `description` and `toolUseId` (the Agent call's id in the parent's items) from `.meta.json`. Linking them into a thread is the store's job.
+- `transcript`: `<config>/projects/<cwd with every non-alphanumeric character as ->/<session>.jsonl`, else the first project directory holding `<session>.jsonl` (names over 200 characters carry a hash; `/cd` moves a session; session ids are unique). Ids other than ASCII letters, digits and `-` are refused. `config_dir`: `$CLAUDE_CONFIG_DIR`, else `~/.claude`; `memory::prov` uses both to find a session's model.

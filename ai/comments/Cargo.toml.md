@@ -15,3 +15,5 @@ Memory:
 - `serde` (`derive`): the usage log record, written and read as JSON Lines with `serde_json`.
 
 Notes: reuse memory's backend (Claude Code compactor), retry and job limits, grep pattern, nap spawning and log; gix (with `index`) for the repo, jiff for ids, regex for `[[id]]` links, tempfile for atomic repo creation. No YAML crate: frontmatter is `key: value` lines.
+
+Chat: serde_json for transcripts and tool inputs, jiff for item times, memchr to cut a file at its last newline, tempfile in tests.

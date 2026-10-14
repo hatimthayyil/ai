@@ -6,9 +6,12 @@ use std::{
 
 use gix::{ObjectId, bstr::ByteSlice};
 
-use crate::memory::{
-    record::{Place, Who},
-    store::edit_config,
+use crate::{
+    chat::claude,
+    memory::{
+        record::{Place, Who},
+        store::edit_config,
+    },
 };
 
 const ROOT: &str = "ai.root";
@@ -113,16 +116,12 @@ pub fn who(var: impl Fn(&str) -> Option<String>) -> Who {
         }
     });
     let model = var("AI_MODEL").or_else(|| {
-        let home = var("HOME").map(PathBuf::from);
         if let Some(id) = var("CLAUDE_CODE_SESSION_ID") {
-            let dir = var("CLAUDE_CONFIG_DIR")
-                .map(PathBuf::from)
-                .or_else(|| Some(home.as_ref()?.join(".claude")))?;
-            claude_model(&dir, &id)
+            claude_model(&claude::config_dir(var)?, &id)
         } else if let Some(id) = var("CODEX_THREAD_ID") {
             let dir = var("CODEX_HOME")
                 .map(PathBuf::from)
-                .or_else(|| Some(home.as_ref()?.join(".codex")))?;
+                .or_else(|| Some(PathBuf::from(var("HOME")?).join(".codex")))?;
             codex_model(&dir, &id)
         } else {
             None
@@ -143,15 +142,8 @@ fn safe_id(id: &str) -> bool {
 }
 
 fn claude_model(dir: &Path, id: &str) -> Option<String> {
-    if !safe_id(id) {
-        return None;
-    }
-    let file = format!("{id}.jsonl");
-    let path = std::fs::read_dir(dir.join("projects"))
-        .ok()?
-        .flatten()
-        .map(|e| e.path().join(&file))
-        .find(|p| p.is_file())?;
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let path = claude::transcript(dir, id, &cwd)?;
     last_model(&path, r#""type":"assistant""#, "/message/model")
 }
 
