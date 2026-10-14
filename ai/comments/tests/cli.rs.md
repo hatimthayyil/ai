@@ -6,13 +6,9 @@ Binary tests. `Sandbox` isolates every run: `HOME`/`XDG_CONFIG_HOME` in the temp
 
 `a_note_from_stdin_is_summarised_in_the_background`: `ai notes add` with its body on stdin and the store at its default (`~/.ai/notes` in the sandbox home); a fake `claude` replies `scope\n\ngist`, and the detached nap commits both summaries, leaving a clean work tree.
 
-`a_chat_turn_end_to_end_with_a_fake_claude`: `ai chat` on a pipe with a fake `claude` (bash) on `PATH` that records argv, env, the system prompt file and its first message: one prime then one turn, identical argv, `DISABLE_PROMPT_CACHING` only on the prime, `dontAsk` + allowlist, `--mcp-config` pointing at this binary and memory, the sandbox HOME's CLAUDE.md last in the prompt, identical view blocks (marked only in the prime), the logged user/tool (call and result)/ai, provenance, no follow-up turn logged. Then `ai chat mcp` answers JSON-RPC over stdio on the result.
+`Sandbox::fake_claude` installs a fake: `bash` resolved from `PATH` for the shebang, the executable written by a `cp` child to avoid ETXTBSY.
 
-`Sandbox::fake_claude` installs both fakes the same way as chat's `fake` (see `ai/comments/src/chat/session.rs.md`): `bash` resolved from `PATH` for the shebang, the executable written by a `cp` child to avoid ETXTBSY.
-
-`Tui`: `ai chat` on a pseudo-terminal (libc `openpty`, master close-on-exec so only the test holds it), answering the cursor-position and device-attribute queries crossterm makes at startup. `sigterm_ends_the_tui_idle_priming_or_in_a_turn_and_restores_the_terminal` sends SIGTERM idle, while priming hangs, and while a turn hangs, and requires a clean exit that turns bracketed paste off. A failing wait SIGKILLs the child, and `Drop` kills it too, so a failure never leaves a chat behind.
-
-`parallel_processes_lose_nothing` asserts the log is in `ts` order; it was flaky (~1 in 4) until the store stamped messages inside the mutation (store.rs.md, Time order). Provenance checks grep's default (date header, then `id|text`) and `--time -o origin,repo,kind`. The chat test's view and logged labels have bare notes and bare one-message ids (`0|the code word is papaya`).
+`parallel_processes_lose_nothing` asserts the log is in `ts` order; it was flaky (~1 in 4) until the store stamped messages inside the mutation (store.rs.md, Time order). Provenance checks grep's default (date header, then `id|text`) and `--time -o origin,repo,kind`.
 
 Usage log: `every_command_logs_one_usage_line` runs wake, notes (one refused), zooms (one bad id), grep with flags and `--before`, and show from a git work tree with `AI_AGENT`/`AI_MODEL`/`AI_SESSION`, then checks each JSON line (cmd, args as typed, ok and error, lines and bytes, provenance, ts) and `stats --by agent`'s exact output. `parallel_reads_log_whole_lines`: 16 processes append 10 kB lines; every line parses. `an_unwritable_usage_log_fails_nothing`: `usage.jsonl` as a directory; note and wake still succeed. `nothing_is_written_outside_the_store_but_the_root_cache`: the store holds `usage.jsonl`; outside it only the work repo's `.git/config` changes, gaining `ai.root`.
 

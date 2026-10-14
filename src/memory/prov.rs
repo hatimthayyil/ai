@@ -82,11 +82,6 @@ fn first_commit(repo: &gix::Repository) -> Option<ObjectId> {
         .map(|(_, id)| id)
 }
 
-/// The work tree of the git repository at `cwd`.
-pub fn repo_root(cwd: &Path) -> Option<PathBuf> {
-    Some(gix::discover(cwd).ok()?.workdir()?.to_path_buf())
-}
-
 fn identity(repo: &gix::Repository) -> Option<String> {
     let url = repo.config_snapshot().string("remote.origin.url");
     url.and_then(|u| owner_name(u.as_bstr())).or_else(|| {

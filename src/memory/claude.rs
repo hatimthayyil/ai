@@ -141,18 +141,8 @@ pub struct Proc {
 impl Proc {
     /// Starts `cmd`; a reader thread hands `sink` each stdout line, then `None` at its end.
     pub fn spawn(
-        cmd: Command,
-        live: Option<&Live>,
-        sink: impl FnMut(Option<String>) + Send + 'static,
-    ) -> Result<Proc> {
-        Self::spawn_until(cmd, live, None, sink)
-    }
-
-    /// Ends a one-shot call at its terminal event before handing it to a slower consumer.
-    pub fn spawn_until(
         mut cmd: Command,
         live: Option<&Live>,
-        stop: Option<fn(&Value) -> bool>,
         mut sink: impl FnMut(Option<String>) + Send + 'static,
     ) -> Result<Proc> {
         let mut registry = live.map(|l| l.0.lock().expect("live lock"));
@@ -175,7 +165,6 @@ impl Proc {
         let child = proc.child.as_mut().expect("spawned child");
         let stdout = child.stdout.take().context("No stdout.")?;
         let mut err = child.stderr.take().context("No stderr.")?;
-        let pid = child.id();
         proc.stdin = child.stdin.take().map(|mut pipe| {
             let (tx, rx) = channel::<String>();
             thread::spawn(move || {
@@ -192,16 +181,7 @@ impl Proc {
         });
         thread::spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                let finished =
-                    stop.is_some_and(|stop| serde_json::from_str(&line).is_ok_and(|ev| stop(&ev)));
-                if finished {
-                    terminate(pid);
-                    kill_group(pid);
-                }
                 sink(Some(line));
-                if finished {
-                    break;
-                }
             }
             sink(None);
         });
@@ -586,33 +566,6 @@ mod cleanup_tests {
         assert!(!running(child));
         live.kill_all();
         assert!(Proc::spawn(shell("sleep 60"), Some(&live), |_| {}).is_err());
-    }
-    #[test]
-    fn terminal_event_kills_before_a_slow_consumer_and_followup() {
-        let temp = TempDir::new().unwrap();
-        let sentinel = temp.path().join("followup");
-        let script = format!(
-            "for i in {{1..50}}; do echo '{{\"type\":\"assistant\"}}'; done; echo '{{\"type\":\"result\"}}'; sleep .02; touch '{}'; sleep 60",
-            sentinel.display()
-        );
-        let (tx, rx) = channel();
-        let proc = Proc::spawn_until(
-            shell(&script),
-            None,
-            Some(|ev| ev["type"] == "result"),
-            move |line| {
-                let _ = tx.send(line);
-            },
-        )
-        .unwrap();
-        let mut last = None;
-        while last.as_deref() != Some("{\"type\":\"result\"}") {
-            last = rx.recv_timeout(Duration::from_secs(10)).unwrap().or(last);
-        }
-        thread::sleep(Duration::from_millis(100));
-        assert!(!sentinel.exists());
-        assert!(rx.try_iter().flatten().next().is_none());
-        drop(proc);
     }
     #[test]
     fn parent_death_kills_an_ignoring_term_claude() {

@@ -1,6 +1,6 @@
 # Cargo.toml
 
-- One package, `ai-tools`, the only crate published to crates.io: a lib target (`src/lib.rs`, modules `memory`, `notes` and `chat`) and the `ai` bin. No workspace, no path dependencies, no cargo features.
+- One package, `ai-tools`, the only crate published to crates.io: a lib target (`src/lib.rs`, modules `memory` and `notes`) and the `ai` bin. No workspace, no path dependencies, no cargo features.
 - `include`: the published package holds only `src` (with the prompts), `tests` (with fixtures), `LICENSE` and the cargo files.
 - `license = "CC0-1.0"`; `LICENSE` is the CC0 1.0 Universal legal code verbatim.
 - `[profile.dev.package."*"] opt-level = 3`: dependencies build optimized in dev/test. gix in debug (sha1dc, zlib-rs, odb) made the in-process test suite ~5x slower (54 s vs 10 s). Our crate stays unoptimized for debugging.
@@ -15,5 +15,3 @@ Memory:
 - `serde` (`derive`): the usage log record, written and read as JSON Lines with `serde_json`.
 
 Notes: reuse memory's backend (Claude Code compactor), retry and job limits, grep pattern, nap spawning and log; gix (with `index`) for the repo, jiff for ids, regex for `[[id]]` links, tempfile for atomic repo creation. No YAML crate: frontmatter is `key: value` lines.
-
-Chat: reuses memory's storage, compaction and Claude process primitives; clap for CLI, signal-hook for terminal signals, jiff for local dates, serde_json for stream/MCP protocol. TUI: ratatui 0.30 without default features (`crossterm` backend, `scrolling-regions` for history inserts; crossterm 0.29 through `ratatui::crossterm`), unicode-width/unicode-segmentation for layout, pulldown-cmark for markdown, syntect (default syntaxes and themes, pure-Rust `regex-fancy`, no onig C build) for code. Screen tests compare `TestBackend` text directly. Fake scripts only in tests.

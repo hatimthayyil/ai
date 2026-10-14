@@ -1,3 +1,3 @@
 # memory/mod.rs
 
-Exports shared storage, view, compactor, provenance, paging and Claude process helpers for `chat`. Keeps the same memory CLI; `chat` reuses these APIs instead of duplicating the tree or process protocol.
+Exports storage, view, compactor, provenance, paging and the Claude Code backend; `notes` reuses the backend, retry limits, grep pattern, nap spawning and log instead of duplicating them.

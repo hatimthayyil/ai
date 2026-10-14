@@ -30,7 +30,6 @@ pub const TRIES: usize = 5;
 pub const RETRY: Duration = Duration::from_secs(10);
 pub const RETRY_MAX: Duration = Duration::from_secs(300);
 pub const RETRIES: usize = 8;
-pub const MARKS: [usize; 3] = [50_000, 80_000, 100_000];
 
 /// What one compactor call builds.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,25 +44,6 @@ pub enum Step {
 pub struct Job {
     pub node: Coord,
     pub step: Step,
-}
-
-/// `s` cut after the last line end before each mark (in characters); marks past the end skipped.
-pub fn cut_blocks(s: &str, marks: &[usize]) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut from = 0;
-    for &m in marks {
-        let Some((at, _)) = s.char_indices().nth(m) else {
-            continue;
-        };
-        let end = s[..at].rfind('\n').map_or(0, |k| k + 1);
-        if end <= from {
-            continue;
-        }
-        out.push(s[from..end].to_string());
-        from = end;
-    }
-    out.push(s[from..].to_string());
-    out
 }
 
 fn step_text(step: &Step) -> String {
@@ -180,7 +160,6 @@ impl fmt::Display for GaveUp {
 impl std::error::Error for GaveUp {}
 
 type Done = (Coord, Duration, Result<(Who, String)>);
-type Notify = Arc<dyn Fn() + Send + Sync>;
 
 /// The pump: builds every node whose sources exist and whose context is all summaries,
 /// up to `jobs` at once, each through `backend` on its own thread. One per memory.
@@ -196,7 +175,6 @@ pub struct Compactor<'s> {
     built: u64,
     tx: Sender<Done>,
     rx: Receiver<Done>,
-    notify: Option<Notify>,
     _lock: File,
 }
 
@@ -220,7 +198,6 @@ impl<'s> Compactor<'s> {
             built: 0,
             tx,
             rx,
-            notify: None,
             _lock: lock,
         }))
     }
@@ -237,15 +214,6 @@ impl<'s> Compactor<'s> {
     /// The first failure of each node since it last succeeded, once.
     pub fn take_reports(&mut self) -> Vec<String> {
         std::mem::take(&mut self.reports)
-    }
-
-    pub fn busy(&self) -> usize {
-        self.busy.len()
-    }
-
-    /// Calls `f` from a job's thread each time a call ends, so an event loop knows to [`Self::step`].
-    pub fn notify(&mut self, f: impl Fn() + Send + Sync + 'static) {
-        self.notify = Some(Arc::new(f));
     }
 
     /// When the earliest failed node may be tried again.
@@ -287,7 +255,6 @@ impl<'s> Compactor<'s> {
             let job = self.job(c)?;
             self.busy.insert(c);
             let (backend, tx) = (self.backend.clone(), self.tx.clone());
-            let notify = self.notify.clone();
             let (span, dispatch) = (Span::current(), dispatcher::get_default(Clone::clone));
             thread::spawn(move || {
                 let _d = dispatcher::set_default(&dispatch);
@@ -295,9 +262,6 @@ impl<'s> Compactor<'s> {
                 let start = Instant::now();
                 let r = summarize(&*backend, &job);
                 let _ = tx.send((job.node, start.elapsed(), r));
-                if let Some(f) = notify {
-                    f();
-                }
             });
         }
         Ok(())
@@ -417,14 +381,6 @@ mod tests {
                 .trim_end()
                 .ends_with("non-ASCII characters cost 2-4 bytes.")
         );
-    }
-
-    #[test]
-    fn blocks_cut_after_line_ends_before_each_mark() {
-        let s = "aaaa\nbbbb\ncccc\ndddd";
-        assert_eq!(cut_blocks(s, &[7, 12]), ["aaaa\n", "bbbb\n", "cccc\ndddd"]);
-        assert_eq!(cut_blocks(s, &[2, 7, 100]), ["aaaa\n", "bbbb\ncccc\ndddd"]);
-        assert_eq!(cut_blocks("é\néé\n", &[3]), ["é\n", "éé\n"]);
     }
 
     #[test]
