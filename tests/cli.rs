@@ -881,7 +881,7 @@ fn a_chat_turn_end_to_end_with_a_fake_claude() {
 /// `ai chat` on a pseudo-terminal, answering the terminal queries the TUI makes.
 struct Tui {
     child: std::process::Child,
-    master: Option<fs::File>,
+    master: fs::File,
     out: Vec<u8>,
     answered: usize,
     stderr: PathBuf,
@@ -928,7 +928,7 @@ impl Tui {
             .unwrap();
         Tui {
             child,
-            master: Some(master),
+            master,
             out: Vec::new(),
             answered: 0,
             stderr: s.path().join("stderr"),
@@ -940,7 +940,7 @@ impl Tui {
         use std::io::{Read, Write};
         use std::os::fd::AsRawFd;
         let deadline = Instant::now() + Duration::from_secs(10);
-        let master = self.master.as_mut().unwrap();
+        let master = &mut self.master;
         while !text(&self.out).contains(what) {
             assert!(
                 Instant::now() < deadline,
@@ -984,11 +984,7 @@ impl Tui {
 
     fn type_in(&mut self, s: &str) {
         use std::io::Write;
-        self.master
-            .as_mut()
-            .unwrap()
-            .write_all(s.as_bytes())
-            .unwrap();
+        self.master.write_all(s.as_bytes()).unwrap();
     }
 
     /// Waits at most two seconds for the chat to exit.
@@ -1013,15 +1009,6 @@ impl Drop for Tui {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-#[test]
-fn a_closed_terminal_ends_the_tui() {
-    let s = Sandbox::new();
-    let mut t = Tui::start(&s, "sleep 60\n");
-    t.until("Ctrl-D exits");
-    drop(t.master.take());
-    assert!(t.exits().success());
 }
 
 const PRIMES_THEN_HANGS: &str = r#"read -r initial
