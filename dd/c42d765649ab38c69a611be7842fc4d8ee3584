@@ -1,0 +1,39 @@
+ai/comments/src/chat/claude.rs.md
+  s_77b04d9838f161::t_8474f6d9d6938f 12
+src/chat/claude.rs
+  s_77b04d9838f161::t_4d52ea8820e72e 659-677
+  s_77b04d9838f161::t_61f503572c2973 297-299
+  s_77b04d9838f161::t_2d10d144a92483 702-704,708-713
+  s_77b04d9838f161::t_d72f5f8a2f37c1 338-356
+  s_77b04d9838f161::t_615eed2e070154 428
+  s_77b04d9838f161::t_3ba2e559ec7ff3 678,714
+ai/glossary.md
+  s_77b04d9838f161::t_8474f6d9d6938f 33,37,39
+src/chat/model.rs
+  s_77b04d9838f161::t_1849a73a736a73 19-20
+  s_77b04d9838f161::t_b642b49237976a 111
+  s_77b04d9838f161::t_7a796a39c8670f 172
+  s_77b04d9838f161::t_3889ff4124d376 21-23,110,114,118,124,163,173-175,237
+tests/fixtures/claude/subagent.jsonl
+  s_77b04d9838f161::t_3375e6b535cc07 5-7
+tests/fixtures/claude/subagent/subagents/agent-a1b2c3d4e5f6a7b8c.jsonl
+  s_77b04d9838f161::t_c21a9e9ecd1d4b 6-7
+ai/comments/src/chat/model.rs.md
+  s_77b04d9838f161::t_8474f6d9d6938f 10-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ddc42d765649ab38c69a611be7842fc4d8ee3584",
+  "prompts": {},
+  "sessions": {
+    "s_77b04d9838f161": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "799603ff-89ac-4e8a-9cfb-a9648c74f1fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Hatim Thayyil <hatim@thayyil.net>"
+    }
+  }
+}
