@@ -1,0 +1,73 @@
+src/notes/summary.rs
+  s_8ea1649a2e72b0::t_72ace25d5cf2cd 58
+tests/notes.rs
+  s_8ea1649a2e72b0::t_1e1b18acfd5861 246-248
+  s_8ea1649a2e72b0::t_b2f1182e0a1c21 467-470
+  s_8ea1649a2e72b0::t_d5eb303bb11064 497
+  s_8ea1649a2e72b0::t_592e1d793ddb39 538-543,545-546
+  s_8ea1649a2e72b0::t_0b9ddf694306e5 584,587-591,594
+  s_8ea1649a2e72b0::t_550743bf20b795 373
+  s_8ea1649a2e72b0::t_655d992eef8def 318-330,341-342,353
+  s_8ea1649a2e72b0::t_bc721728bf626f 316-317,466,687,696-711
+  s_8ea1649a2e72b0::t_5056a9f8194ac9 185-189,191,193,280-281,290-299,302,310-311,356,364-365,485-491,493,721,740-741
+  s_8ea1649a2e72b0::t_e2d245fdfc7061 570
+  s_8ea1649a2e72b0::t_faf2748cf15772 306-307,309,312-314,331-340,343-352
+  s_8ea1649a2e72b0::t_f8abc2a9da8214 433-436
+  s_8ea1649a2e72b0::t_47f67cc4afab7a 502
+  s_8ea1649a2e72b0::t_3255843fb5e3ed 557-561
+  s_8ea1649a2e72b0::t_5077e474a6df48 179,181-184,190
+  s_8ea1649a2e72b0::t_c758a8f0837574 263,267
+  s_8ea1649a2e72b0::t_e3928ec45870e7 192
+  s_8ea1649a2e72b0::t_87519f322b01d3 308
+  s_8ea1649a2e72b0::t_b14ed5f1ef4335 315
+  s_8ea1649a2e72b0::t_417eb3f23a8f0d 492
+src/notes/store.rs
+  s_8ea1649a2e72b0::t_248db78fdbc52e 216-225
+ai/comments/src/notes/summary.rs.md
+  s_8ea1649a2e72b0::t_c9a269b86f169a 4
+ai/comments/src/notes/cli.rs.md
+  s_8ea1649a2e72b0::t_d7949de812dae2 7-8,10-13
+src/notes/cli.rs
+  s_8ea1649a2e72b0::t_0a924d22c546d8 77-81
+  s_8ea1649a2e72b0::t_14ddf2a5d155a5 190-192
+  s_8ea1649a2e72b0::t_b3d836712a1a52 264
+  s_8ea1649a2e72b0::t_20e7ed8d7fa021 358-359
+  s_8ea1649a2e72b0::t_22c759a72f0f65 157-180
+  s_8ea1649a2e72b0::t_050239d522fe70 375
+  s_8ea1649a2e72b0::t_2607286828e9cf 412
+  s_8ea1649a2e72b0::t_6b78a428cc1c18 242
+  s_8ea1649a2e72b0::t_adc44fe44212bf 20
+  s_8ea1649a2e72b0::t_7da251b0493362 295-296,298
+  s_8ea1649a2e72b0::t_0a93761c22c5b8 276
+  s_8ea1649a2e72b0::t_fd77318ff5ccfc 185
+  s_8ea1649a2e72b0::t_8523fc697f317c 336
+  s_8ea1649a2e72b0::t_25979dfa517f91 22
+tests/cli.rs
+  s_8ea1649a2e72b0::t_5056a9f8194ac9 1275-1276
+  s_8ea1649a2e72b0::t_0d83c3702b5b83 1277-1282
+ai/glossary.md
+  s_8ea1649a2e72b0::t_1bf08f0d2083a7 36
+ai/comments/src/notes/leaf.rs.md
+  s_8ea1649a2e72b0::t_3e63d5cc4bee27 5-6
+README.md
+  s_8ea1649a2e72b0::t_1eaab88a9408c8 33-34
+src/notes/leaf.rs
+  s_8ea1649a2e72b0::t_d6098fd27aaf5b 1,12-13,104-105,109,112,140-142,144,147,169-182,184,187-191,194,197-198,202,204-212,216-231,255-267,292,294-295,309-336,342,362,375
+  s_8ea1649a2e72b0::t_61a0cb73157b06 374,376-384
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fde5154e1bb3f053decef47d489e860d1530f14c",
+  "prompts": {},
+  "sessions": {
+    "s_8ea1649a2e72b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "79b45b42-017d-4f12-bce4-ae33301d422a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Hatim Thayyil <hatim@thayyil.net>"
+    }
+  }
+}

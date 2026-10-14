@@ -1,0 +1,90 @@
+ai/comments/src/notes/store.rs.md
+  s_8ea1649a2e72b0::t_747208c6ff4ebc 12
+  s_8ea1649a2e72b0::t_47d2f5df1b13b5 1-8,10-11,13
+  s_8ea1649a2e72b0::t_5c4388f542cf81 9
+src/notes/mod.rs
+  s_8ea1649a2e72b0::t_cace8d43d3c31f 1-11
+ai/comments/Cargo.toml.md
+  s_8ea1649a2e72b0::t_e1950480bdfa15 3
+  s_8ea1649a2e72b0::t_0fd11db74b03cd 9
+  s_8ea1649a2e72b0::t_88005c269b07e9 17
+  s_8ea1649a2e72b0::t_410b713b1a3935 18
+ai/comments/src/notes/leaf.rs.md
+  s_8ea1649a2e72b0::t_442c2411327276 1-8
+src/notes/summary.rs
+  s_8ea1649a2e72b0::t_46f00b72410b14 1-199
+  s_8ea1649a2e72b0::t_81922d7bbea083 200-212
+ai/comments/tests/notes.rs.md
+  s_8ea1649a2e72b0::t_9a994541766333 1-3
+tests/notes.rs
+  s_8ea1649a2e72b0::t_fb2ab2844e16d2 1-8,10-84,89-196,202-248,251-265,270-275,288,293,304-317,322-333,338,341,346-368,374-380,386-395,401-411,416-424,428-434,442-469,478-503,508-525,530,535,546-555,560
+  s_8ea1649a2e72b0::t_a09c954db90bdf 9,85-88,197-201,249-250,266-269,276-287,289-292,294-303,318-321,334-337,339-340,342-345,369-373,381-385,396-400,412-415,425-427,435-441,470-477,504-507,526-529,531-534,536-545,556-559
+  s_8ea1649a2e72b0::t_499dab634824c5 561-571,579-587
+  s_8ea1649a2e72b0::t_0dda24ce812c69 572-578
+src/main.rs
+  s_8ea1649a2e72b0::t_1854bf730cd6c1 16-17,25
+ai/comments/src/notes/summary.rs.md
+  s_8ea1649a2e72b0::t_24bfbff82c22b6 1-8
+src/notes/store.rs
+  s_8ea1649a2e72b0::t_9615285448cb9d 165
+  s_8ea1649a2e72b0::t_2d1841048fc9aa 200-201
+  s_8ea1649a2e72b0::t_bc23ef4f6be817 1-164,166-171,182-199,202-210,214-275
+  s_8ea1649a2e72b0::t_50530a506ec39f 211-213
+  s_8ea1649a2e72b0::t_532bd0526141c7 172-178,180
+  s_8ea1649a2e72b0::t_47b9f666dfbcaf 179,181
+ai/comments/src/notes/cli.rs.md
+  s_8ea1649a2e72b0::t_7455180dbddb69 1-14
+ai/comments/src/main.rs.md
+  s_8ea1649a2e72b0::t_0066457c0942b4 3
+src/notes/prompts/summary.txt
+  s_8ea1649a2e72b0::t_9f8cca44053345 1-31
+ai/comments/src/notes/topic.rs.md
+  s_8ea1649a2e72b0::t_415830224333e8 1-3
+tests/cli.rs
+  s_8ea1649a2e72b0::t_7c7022199dc1d6 1283
+  s_8ea1649a2e72b0::t_02dc48b76d999f 1053,1261-1282,1284-1309
+  s_8ea1649a2e72b0::t_e80ab52d1fba5a 13,15,64,355-358
+  s_8ea1649a2e72b0::t_33e25a46f0cd75 1310-1314
+ai/glossary.md
+  s_8ea1649a2e72b0::t_036a9be9068c90 34-38
+src/lib.rs
+  s_8ea1649a2e72b0::t_cace8d43d3c31f 3
+ai/comments/tests/cli.rs.md
+  s_8ea1649a2e72b0::t_0066457c0942b4 3
+  s_8ea1649a2e72b0::t_0a5a2d0111b28b 7
+  s_8ea1649a2e72b0::t_5ce8f9da4de4b5 8
+README.md
+  s_8ea1649a2e72b0::t_fa4732ccc3199c 6,32-42
+  s_8ea1649a2e72b0::t_1940ed6f6cdb42 43
+src/notes/leaf.rs
+  s_8ea1649a2e72b0::t_72f163d067a540 233
+  s_8ea1649a2e72b0::t_9cbec92102963b 1-232,234-281
+  s_8ea1649a2e72b0::t_9620a3c6a8ecb6 282-295
+src/notes/topic.rs
+  s_8ea1649a2e72b0::t_189390e4e5613e 1-96
+src/notes/cli.rs
+  s_8ea1649a2e72b0::t_ce25edf9a2d07d 1-487
+  s_8ea1649a2e72b0::t_dabd16e992f45b 488-512
+Cargo.toml
+  s_8ea1649a2e72b0::t_8c102d647f6188 19
+ai/comments/src/lib.rs.md
+  s_8ea1649a2e72b0::t_e5d781256d36d9 3
+Cargo.lock
+  s_8ea1649a2e72b0::t_5988dd0c158f01 670-679,790,845-853,1060-1087
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "24ccd39af15b6856efb8e2d2dddefc9009a91145",
+  "prompts": {},
+  "sessions": {
+    "s_8ea1649a2e72b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "79b45b42-017d-4f12-bce4-ae33301d422a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Hatim Thayyil <hatim@thayyil.net>"
+    }
+  }
+}
