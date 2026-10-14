@@ -7,7 +7,6 @@
 - `ai chat` frozen (2026-10-08) until Victor Taelin open-sources his OptChat; then redesign. One session burned ~35% of usage (tool calls logged, whole-view compactor context, Opus re-priming).
 - `ai memory` compactor prompt defects fixed (retry asks for a complete rewrite; `scale.txt` is lorem ipsum): truncation 37→2 (Sonnet), 23→6 (Haiku), no leaks. Haiku 5.5 still distorts merges (`ai/evals/compactor`, 2026-10-08b); Sonnet stays default.
 - `ai memory`: test `parallel_processes_lose_nothing` is flaky (timestamp ordering); failed once in 4 runs.
-- `ai chat` TUI test `a_closed_terminal_ends_the_tui` (tests/cli.rs) failed on nixbuild.net (2 CPUs) installing 0.5.2; passes locally 5/5. nixbuild caches the failure, so a retry needs `--builders ''`.
 - Shelved (2026-10-09, with `ai chat`): pi extension: `ai memory` as pi's context engine, with pi as the agent. `context` hook replaces messages with the view plus recent messages; `session_before_compact` cancels pi compaction (the `ai memory` compactor owns it); `message_end`/`tool_execution_end` log to the store; `registerTool` for zoom/date; pi's cache warming replaces priming. Precedent: pi-blackhole. For models off the Claude subscription (API key, ChatGPT, local): pi bills Claude Pro/Max as per-token extra usage (`pi/packages/coding-agent/docs/providers.md`). Needs store and compactor usable from outside `ai chat`, and Session emitting events (TUI work).
 - Multi-machine sync for the chat memory (rebase-style merge: pushed messages never move), deferred.
 - Repo-level memory, alongside the user memory. Deferred. Decided (2026-10-04):
@@ -20,3 +19,7 @@
 - `ai memory` summaries carry `note:`/`user:` tags copied from the leaves (code labels each leaf `note: text`); Sonnet ignores an instruction to drop them. Wasted bytes per item; decide whether leaves should be unlabelled or tags kept only for `user:` words. See ai/evals/compactor/README.md 2026-10-08c.
 - Before a public release: version the store format and give `ai memory` an upgrade path (e.g. rebuild old leaves that still carry `note:` tags). Not needed while only the user runs it.
 - Before a public release: `ai hooks install` to add the memory reminder hooks (Claude Code, Codex, pi) on a new machine; on this machine the Nix config does it.
+
+## Notes
+
+- `ai notes` layer 1 merged (design `ai/research/20261013T222521---notes-design.md`). User not yet on board with the model: a topic is a bare directory and only notes (files) carry content, IDs and links, so `linguistics` itself cannot be a note or a link target. Next: make every node a note (Luhmann: any card can have sub-cards; Dendron: `linguistics.syntax` is itself a note), with the derived summary attached to any node that has children and links to any node by ID. Then layer 2 (curator, supersedes, staleness lint).
