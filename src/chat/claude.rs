@@ -294,6 +294,9 @@ fn user(v: &Value) -> Vec<Kind> {
     if v["isCompactSummary"] == true {
         return vec![Kind::Marker(Marker::Summary)];
     }
+    if let Some(work) = work(v) {
+        return vec![work];
+    }
     if v["isMeta"] == true {
         return Vec::new();
     }
@@ -330,6 +333,25 @@ fn user(v: &Value) -> Vec<Kind> {
         out.push(Kind::Marker(Marker::Interrupt));
     }
     out
+}
+
+/// A message from another agent: a peer's report or hand-back (its body, from its name), or
+/// the coordinator's message to a subagent.
+fn work(v: &Value) -> Option<Kind> {
+    let origin = &v["origin"];
+    let from = match origin["kind"].as_str()? {
+        "peer" => origin["name"].as_str().or(origin["from"].as_str())?,
+        "coordinator" => "coordinator",
+        _ => return None,
+    };
+    let text = match origin["body"].as_str() {
+        Some(body) => body.to_string(),
+        None => text(&v["message"]["content"]),
+    };
+    Some(Kind::Work {
+        from: from.into(),
+        text,
+    })
 }
 
 /// A user entry the user typed or sent, or a subagent's task; never injected context.
@@ -403,6 +425,7 @@ mod tests {
             .map(|i| {
                 let kind = match &i.kind {
                     Kind::User(_) => "user".to_string(),
+                    Kind::Work { .. } => "work".into(),
                     Kind::Text(_) => "text".into(),
                     Kind::ToolCall { .. } => "call".into(),
                     Kind::ToolResult { .. } => "result".into(),
@@ -633,6 +656,26 @@ mod tests {
         assert!(
             matches!(&items[1].kind, Kind::ToolCall { id, name, .. } if id == "toolu_50" && name == "Agent")
         );
+        assert_eq!(
+            shape(&items)[3..],
+            ["a2<-r1 text", "w1<-a2 work", "a3<-w1 text"],
+            "a hand-back opens an exchange; a task notification is dropped"
+        );
+        assert_eq!(
+            items[4].kind,
+            Kind::Work {
+                from: "researcher".into(),
+                text: "Three of four tools keep one JSONL file per session; one uses SQLite."
+                    .into()
+            }
+        );
+        assert_eq!(
+            steps(items),
+            [
+                vec![vec!["u1"], vec!["a1", "r1"], vec!["a2"]],
+                vec![vec!["w1"], vec!["a3"]]
+            ]
+        );
         let subs = subagents(&path, SESSION).unwrap();
         assert_eq!(subs.len(), 1);
         let s = &subs[0];
@@ -656,10 +699,19 @@ mod tests {
                 "s1<- user",
                 "sa1<-s1 call",
                 "sr1<-sa1 result",
-                "sa2<-sr1 text"
+                "sa2<-sr1 text",
+                "c1<-sa2 work",
+                "sa3<-c1 text"
             ]
         );
         assert_eq!(s.items[0].id.session, SESSION);
+        assert_eq!(
+            s.items[4].kind,
+            Kind::Work {
+                from: "coordinator".into(),
+                text: "Also check how pi stores sessions.".into()
+            }
+        );
         assert!(
             subagents(&fixture("plain.jsonl"), SESSION)
                 .unwrap()

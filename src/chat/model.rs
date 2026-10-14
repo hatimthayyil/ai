@@ -16,6 +16,11 @@ pub struct SourceId {
 pub enum Kind {
     /// The user's words.
     User(String),
+    /// A report or message from another agent, which the assistant answers.
+    Work {
+        from: String,
+        text: String,
+    },
     /// The assistant's words.
     Text(String),
     ToolCall {
@@ -102,20 +107,21 @@ impl Tree {
     }
 }
 
-/// A user message and the steps that answer it, up to the next user message on the path.
+/// A message (from the user or another agent) and the steps that answer it, up to the next
+/// message on the path.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Exchange {
-    /// Positions on the path. It starts with the user message, unless the path does not.
+    /// Positions on the path. It starts with the message, unless the path does not.
     pub span: Range<usize>,
     /// The rest of the span, cut before each assistant text.
     pub steps: Vec<Range<usize>>,
-    /// A user message follows it on the path.
+    /// A message follows it on the path.
     pub closed: bool,
 }
 
 /// The exchanges along `path`, in order.
 pub fn exchanges(path: &[&Item]) -> Vec<Exchange> {
-    let user = |i: usize| matches!(path[i].kind, Kind::User(_));
+    let user = |i: usize| matches!(path[i].kind, Kind::User(_) | Kind::Work { .. });
     let mut starts: Vec<usize> = (0..path.len()).filter(|&i| user(i)).collect();
     if !path.is_empty() && !user(0) {
         starts.insert(0, 0);
@@ -154,7 +160,7 @@ mod tests {
         }
     }
 
-    /// Items from `(entry, parent, kind)`: `u` user, `t` text, `c` call, `r` result, `m` marker.
+    /// Items from `(entry, parent, kind)`: `u` user, `w` work, `t` text, `c` call, `r` result, `m` marker.
     fn items(spec: &[(&str, &str, char)]) -> Vec<Item> {
         spec.iter()
             .map(|&(e, p, k)| Item {
@@ -163,6 +169,10 @@ mod tests {
                 ts: Timestamp::UNIX_EPOCH,
                 kind: match k {
                     'u' => Kind::User(e.into()),
+                    'w' => Kind::Work {
+                        from: "agent".into(),
+                        text: e.into(),
+                    },
                     't' => Kind::Text(e.into()),
                     'c' => Kind::ToolCall {
                         id: e.into(),
@@ -224,7 +234,7 @@ mod tests {
             ("c4", "", 'c'),
             ("r4", "", 'r'),
             ("t4", "", 't'),
-            ("u3", "", 'u'),
+            ("w1", "", 'w'),
         ]);
         let path: Vec<&Item> = all.iter().collect();
         let x = |span: Range<usize>, steps: &[(usize, usize)], closed: bool| Exchange {
