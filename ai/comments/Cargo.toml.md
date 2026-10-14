@@ -1,6 +1,6 @@
 # Cargo.toml
 
-- One package, `ai-tools`, the only crate published to crates.io: a lib target (`src/lib.rs`, modules `memory` and `notes`) and the `ai` bin. No workspace, no path dependencies, no cargo features.
+- One package, `ai-tools`, the only crate published to crates.io: a lib target (`src/lib.rs`, modules `memory`, `notes` and `chat`) and the `ai` bin. No workspace, no path dependencies, no cargo features.
 - `include`: the published package holds only `src` (with the prompts), `tests` (with fixtures), `LICENSE` and the cargo files.
 - `license = "CC0-1.0"`; `LICENSE` is the CC0 1.0 Universal legal code verbatim.
 - `[profile.dev.package."*"] opt-level = 3`: dependencies build optimized in dev/test. gix in debug (sha1dc, zlib-rs, odb) made the in-process test suite ~5x slower (54 s vs 10 s). Our crate stays unoptimized for debugging.

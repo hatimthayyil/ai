@@ -30,3 +30,8 @@
 - `leaf`: one note of the notes: one claim, titled (`# <title>`, ≤ 80 characters, the claim in a few words), body ≤ 1024 bytes, file `<id>---<slug of title>.md`; the id is its UTC Denote timestamp, permanent. Frontmatter: `source`, `confidence` (`verified | reported | speculative | assessment`), `checked`, `decay`, `links`, `supersedes`, `invalid_at`.
 - `scope`, `gist`: the two parts of a topic's `_summary.md`: one line on what lies below, and its key claims. Written by the compactor model from the topic's children; out of date when the hash of that input changes.
 - `breadcrumb`: a topic path as `ai notes grep` prints it: `physics › qm › decoherence`.
+- `item`: one normalised harness entry in `ai chat` (`chat::Item`): a user message, assistant text, tool call, tool result or marker, with its source id (harness, session, entry), parent, time and raw line. Thinking is dropped.
+- `marker`: an item that is a harness event, not content: a compaction point, the harness's own summary, an interrupt.
+- `branch`: the items from a root of the item tree to one tip. Rewinds, edits and two sessions on one thread add branches; nothing is removed.
+- `step`: an assistant text, if any, and the tool calls and results after it, up to the next assistant text.
+- `exchange`: a user message and the steps that answer it, up to the next user message on the branch; closed once one follows.
