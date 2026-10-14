@@ -1,0 +1,67 @@
+src/memory/log.rs
+  s_77b04d9838f161::t_dc76b14eb9976e 11
+src/memory/store.rs
+  s_77b04d9838f161::t_e17e5c13e6ca58 2-3,9-19,21,44,100,112-113,121,126,128,132,135-136,138,141-142,152,158,194,204-206,212,219,221,287,295,379-385,387,390-391,397-403,412,417,424,426,431,436,460,467,473
+src/git.rs
+  s_77b04d9838f161::t_1cd17a7458d689 1-316
+src/memory/prov.rs
+  s_77b04d9838f161::t_8bddd7f5c4cf63 11-12
+src/memory/record.rs
+  s_77b04d9838f161::t_fca2dcef2fc8eb 134,140,143
+  s_77b04d9838f161::t_4949758ed6a33e 4-5
+src/memory/mod.rs
+  s_77b04d9838f161::t_2be73c43d8fc10 34
+ai/comments/src/memory/store.rs.md
+  s_77b04d9838f161::t_d7ea4f97502645 6-8,15,19
+src/memory/cli.rs
+  s_77b04d9838f161::t_e048e4de23a411 15-35
+src/memory/upgrade/mod.rs
+  s_77b04d9838f161::t_8323ecb6fca7e3 3,5-8,21
+src/notes/store.rs
+  s_77b04d9838f161::t_74bfbc9ad59019 3,11
+  s_77b04d9838f161::t_b1cb6eb486f828 142,150
+src/record.rs
+  s_77b04d9838f161::t_e10482d2357124 106
+  s_77b04d9838f161::t_d3963b9a6927a0 112
+  s_77b04d9838f161::t_ae281489418989 3-6,8-12
+  s_77b04d9838f161::t_9237ccc7695068 1-2,7,13-105,107-111,113-135
+src/file.rs
+  s_77b04d9838f161::t_357b4da4eafc76 1-47
+src/notes/cli.rs
+  s_77b04d9838f161::t_1e0484bc9442a7 15,18
+src/lib.rs
+  s_77b04d9838f161::t_d932d974f573aa 2-3,6
+ai/comments/src/git.rs.md
+  s_77b04d9838f161::t_31dbb22d687ea7 1-12
+ai/comments/src/record.rs.md
+  s_77b04d9838f161::t_7f7a10127451df 1-6
+ai/comments/src/memory/record.rs.md
+  s_77b04d9838f161::t_35c3869bab6091 4
+src/memory/upgrade/v1.rs
+  s_77b04d9838f161::t_9968a0a1a4caaf 81
+  s_77b04d9838f161::t_73da986a237721 6-12
+ai/comments/src/memory/upgrade/mod.rs.md
+  s_77b04d9838f161::t_35c3869bab6091 7-8
+src/memory/claude.rs
+  s_77b04d9838f161::t_6857d178cdb239 21-23
+ai/comments/src/file.rs.md
+  s_77b04d9838f161::t_56fe1fd3480228 1-6
+ai/comments/src/lib.rs.md
+  s_77b04d9838f161::t_268278b19ddd16 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "43d0a192cb63d694ae293f5890b10c5722f64215",
+  "prompts": {},
+  "sessions": {
+    "s_77b04d9838f161": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "799603ff-89ac-4e8a-9cfb-a9648c74f1fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Hatim Thayyil <hatim@thayyil.net>"
+    }
+  }
+}
