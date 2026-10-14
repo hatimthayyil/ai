@@ -12,9 +12,10 @@ use clap::{Args, Parser, Subcommand};
 use tracing::{error, info, info_span, warn};
 
 use crate::{
+    file::pretty,
     memory::{
         Backend, ClaudeCode, JOBS, PLACEHOLDER, Pattern, broken_pipe, claude, excerpt, log, plural,
-        pretty, spawn_nap, store_dir,
+        spawn_nap, store_dir,
     },
     notes::{
         leaf::{Confidence, Front, Leaf, check_body, check_title, is_id, new_id},

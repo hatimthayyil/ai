@@ -31,9 +31,7 @@ pub use grep::{Pattern, excerpt};
 pub use hook::{LONG_PROMPT, REMIND_EVERY, REMINDER};
 pub use meta::{Field, Meta};
 pub use record::{Kind, Message, Node, Place, Who, flat, now};
-pub use store::{
-    AtPath, Built, Changes, LOG, ME, REF, Snapshot, Store, fan_path, level_dir, pretty,
-};
+pub use store::{Built, LOG, ME, REF, Snapshot, Store, level_dir};
 pub use tree::{Coord, NODE};
 pub use view::{HIDDEN, Mem, PLACEHOLDER, VIEW};
 pub use zoom::{page, pages, zoom};

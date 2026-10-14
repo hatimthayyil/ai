@@ -8,10 +8,8 @@ use gix::{ObjectId, bstr::ByteSlice};
 
 use crate::{
     chat::claude,
-    memory::{
-        record::{Place, Who},
-        store::edit_config,
-    },
+    git::edit_config,
+    memory::record::{Place, Who},
 };
 
 const ROOT: &str = "ai.root";

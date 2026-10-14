@@ -8,7 +8,7 @@ use anyhow::Result;
 use tracing::{level_filters::LevelFilter, subscriber::DefaultGuard};
 use tracing_subscriber::EnvFilter;
 
-use crate::memory::store::AtPath;
+use crate::file::AtPath;
 
 pub const NAP_LOG: &str = "nap.log";
 

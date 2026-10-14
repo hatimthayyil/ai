@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    fs::{self, File, TryLockError},
+    fs::{self, File},
     path::{Path, PathBuf},
 };
 
@@ -8,7 +8,7 @@ use anyhow::{Context, Result, bail};
 use gix::{ObjectId, objs::tree::EntryKind};
 
 use crate::{
-    memory::{AtPath, pretty},
+    file::{self, AtPath, pretty},
     notes::{
         leaf::{Leaf, parse_name},
         summary::Summary,
@@ -139,9 +139,7 @@ impl Store {
     /// every file as one commit `msg`. The first change creates the repository.
     pub fn mutate<R>(&self, msg: &str, change: impl FnOnce(&Node) -> Result<R>) -> Result<R> {
         self.create()?;
-        let p = self.git_dir().join(LOCK);
-        let lock = File::create(&p).at(&p)?;
-        lock.lock().at(&p)?;
+        let _lock = file::lock(&self.git_dir().join(LOCK))?;
         let r = change(&self.load()?)?;
         self.commit(msg)?;
         Ok(r)
@@ -149,13 +147,7 @@ impl Store {
 
     /// The nap lock, unless another nap holds it.
     pub fn nap_lock(&self) -> Result<Option<File>> {
-        let p = self.git_dir().join(NAP_LOCK);
-        let lock = File::create(&p).at(&p)?;
-        match lock.try_lock() {
-            Ok(()) => Ok(Some(lock)),
-            Err(TryLockError::WouldBlock) => Ok(None),
-            Err(TryLockError::Error(e)) => Err(e).at(&p),
-        }
+        file::try_lock(&self.git_dir().join(NAP_LOCK))
     }
 
     fn create(&self) -> Result<()> {

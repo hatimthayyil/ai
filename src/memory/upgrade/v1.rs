@@ -3,9 +3,13 @@
 
 use anyhow::{Context, Result, anyhow};
 
-use crate::memory::{
-    record::{Kind, Message, Node, Place, Who, valid_ts},
-    store::{Changes, LOG, Seg, Snapshot, fan_path, level_dir},
+use crate::{
+    git::{Changes, fan_path},
+    memory::{
+        record::{COLUMNS, Kind, Message, Node, Place, Who, valid_ts},
+        store::{LOG, Snapshot, level_dir},
+    },
+    record::Seg,
 };
 
 /// Levels a format-1 tree can hold: a message count fits in 64 bits.
@@ -74,7 +78,7 @@ pub fn to_v2(s: &Snapshot) -> Result<Changes> {
             let b = s.fetch(id)?;
             let text =
                 std::str::from_utf8(&b).map_err(|_| anyhow!("A tree segment is corrupt."))?;
-            let mut seg = Seg::default();
+            let mut seg = Seg::new(&COLUMNS);
             seg.lines = text
                 .strip_suffix('\n')
                 .unwrap_or(text)

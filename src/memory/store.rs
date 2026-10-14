@@ -1,30 +1,24 @@
 use std::{
-    cell::RefCell,
-    collections::{BTreeMap, HashMap},
-    fs::{self, File, TryLockError},
-    io,
+    collections::BTreeMap,
+    fs::{self, File},
     path::{Path, PathBuf},
     rc::Rc,
-    time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use gix::{
-    ObjectId,
-    lock::acquire::Fail,
-    objs::tree::EntryKind,
-    refs::{
-        Target,
-        transaction::{PreviousValue, RefEdit},
-    },
-};
+use gix::ObjectId;
 
-use crate::memory::{
-    config::{Config, SECTION, SUBSECTION},
-    meta::stamp,
-    record::{COLUMNS, Message, Node, Who, now},
-    tree::{Coord, free, joined},
-    upgrade::{self, FORMAT},
+use crate::{
+    file::{self, AtPath, pretty},
+    git::{Changes, Ref, Snap, edit_config, fan_path},
+    memory::{
+        config::{Config, SECTION, SUBSECTION},
+        meta::stamp,
+        record::{COLUMNS, Message, Node, Who, now},
+        tree::{Coord, free, joined},
+        upgrade::{self, FORMAT},
+    },
+    record::Seg,
 };
 
 pub const ME: &str = "ai memory";
@@ -35,34 +29,6 @@ const ORIGIN: &str = "origin";
 /// The compactor's lock file; an upgrade takes it too.
 const LOCK: &str = "compact.lock";
 
-/// A path as the user would type it: fold `$HOME` to `~`.
-pub fn pretty(p: &Path) -> String {
-    let p = std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
-    match std::env::home_dir().and_then(|h| p.strip_prefix(h).ok().map(Path::to_path_buf)) {
-        Some(rest) if !rest.as_os_str().is_empty() => format!("~/{}", rest.display()),
-        _ => p.display().to_string(),
-    }
-}
-
-pub trait AtPath<T> {
-    fn at(self, p: &Path) -> Result<T>;
-}
-
-impl<T> AtPath<T> for io::Result<T> {
-    fn at(self, p: &Path) -> Result<T> {
-        self.map_err(|e| {
-            let msg = e.to_string();
-            let reason = msg.split(" (os error").next().unwrap_or(&msg);
-            anyhow!("{}: {reason}.", pretty(p))
-        })
-    }
-}
-
-/// Entry `n` under `dir`, fanned out 256 per tree.
-pub fn fan_path(dir: &str, n: u64) -> String {
-    format!("{dir}/{:04x}/{:02x}", n >> 8, n & 255)
-}
-
 pub fn level_dir(l: u32) -> String {
     format!("tree/{l}")
 }
@@ -71,36 +37,11 @@ fn seg_of(c: Coord) -> (String, usize) {
     (fan_path(&level_dir(c.l), c.i / SEG), (c.i % SEG) as usize)
 }
 
-/// Applies `edit` to the git config file `p` under its lock.
-pub fn edit_config<R>(
-    p: &Path,
-    edit: impl FnOnce(&mut gix::config::File) -> Result<R>,
-) -> Result<R> {
-    let wait = Fail::AfterDurationWithBackoff(Duration::from_secs(3));
-    let mut lock = gix::lock::File::acquire_to_update_resource(p, wait, None)?;
-    let mut file =
-        gix::config::File::from_path_no_includes(p.to_path_buf(), gix::config::Source::Local)?;
-    let r = edit(&mut file)?;
-    file.write_to(&mut lock).at(p)?;
-    lock.commit().map_err(|e| e.error).at(p)?;
-    Ok(r)
-}
-
-/// New blobs by path.
-#[derive(Debug, Default)]
-pub struct Changes(BTreeMap<String, Vec<u8>>);
-
-impl Changes {
-    pub fn put(&mut self, path: String, bytes: Vec<u8>) {
-        self.0.insert(path, bytes);
-    }
-}
-
 /// Nodes a mutation wrote, with their stored text.
 pub type Built = Vec<(Coord, String)>;
 
 pub struct Store {
-    repo: gix::Repository,
+    git: Ref,
     dir: PathBuf,
     pub cfg: Config,
     origin: String,
@@ -156,7 +97,7 @@ impl Store {
         repo.committer_or_set_fallback(ME, "ai@localhost")?;
         let cfg = Config::load(&repo.config_snapshot(), &pretty(&dir.join("config")))?;
         let mut s = Store {
-            repo,
+            git: Ref::new(repo, REF.into(), "memory", FORMAT),
             dir: dir.to_path_buf(),
             cfg,
             origin: String::new(),
@@ -168,8 +109,8 @@ impl Store {
 
     /// Brings the memory to [`FORMAT`] in one commit on its head; refuses a newer one.
     fn upgrade(&self) -> Result<()> {
-        let v = self.raw(self.head()?)?.format()?;
-        upgrade::readable(v)?;
+        let v = self.git.raw(self.head()?)?.format()?;
+        self.git.readable(v)?;
         if v == FORMAT {
             return Ok(());
         }
@@ -177,28 +118,28 @@ impl Store {
             Some(l) => l,
             None => {
                 eprintln!("Waiting for the running nap to finish, to upgrade this memory.");
-                self.lock()?
+                file::lock(&self.dir.join(LOCK))?
             }
         };
         loop {
             let head = self.head()?;
-            let base = self.raw(head)?;
+            let base = self.git.raw(head)?;
             let from = base.format()?;
-            upgrade::readable(from)?;
+            self.git.readable(from)?;
             if from == FORMAT {
                 return Ok(());
             }
-            let mut tree = base.tree;
+            let mut tree = base.tree_id();
             for v in from..FORMAT {
                 let s = Snapshot {
-                    tree,
-                    ..self.raw(head)?
+                    store: self,
+                    git: self.git.tree(head, tree),
                 };
-                tree = self.write_tree(tree, upgrade::step(&s, v)?)?;
+                tree = self.git.write_tree(tree, upgrade::step(&s, v)?)?;
             }
             let msg = format!("upgrade format {from} -> {FORMAT}");
-            let commit = self.new_commit(&msg, tree, head)?;
-            if self.cas(head, commit, &msg)? {
+            let commit = self.git.new_commit(&msg, tree, head)?;
+            if self.git.cas(head, commit, &msg)? {
                 let prev = head.map_or_else(String::new, |h| h.to_string());
                 eprintln!("Upgraded memory to format {FORMAT}; previous state is commit {prev}.");
                 return Ok(());
@@ -208,27 +149,13 @@ impl Store {
 
     /// The compactor's lock on this memory; `None` while another process holds it.
     pub fn try_lock(&self) -> Result<Option<File>> {
-        let p = self.dir.join(LOCK);
-        let f = File::create(&p).at(&p)?;
-        match f.try_lock() {
-            Ok(()) => Ok(Some(f)),
-            Err(TryLockError::WouldBlock) => Ok(None),
-            Err(TryLockError::Error(e)) => Err(e).at(&p),
-        }
-    }
-
-    /// The compactor's lock, waiting for it.
-    fn lock(&self) -> Result<File> {
-        let p = self.dir.join(LOCK);
-        let f = File::create(&p).at(&p)?;
-        f.lock().at(&p)?;
-        Ok(f)
+        file::try_lock(&self.dir.join(LOCK))
     }
 
     /// The origin in this store's config, created by the first open.
     fn load_origin(&self) -> Result<String> {
         let key = format!("{SECTION}.{SUBSECTION}.{ORIGIN}");
-        if let Some(o) = self.repo.config_snapshot().string(key.as_str()) {
+        if let Some(o) = self.git.repo().config_snapshot().string(key.as_str()) {
             return Ok(o.to_string());
         }
         self.edit_config(|f| {
@@ -264,10 +191,7 @@ impl Store {
     }
 
     pub fn head(&self) -> Result<Option<ObjectId>> {
-        Ok(self
-            .repo
-            .try_find_reference(REF)?
-            .and_then(|r| r.try_id().map(|id| id.detach())))
+        self.git.head()
     }
 
     /// The memory as of the latest commit.
@@ -277,85 +201,24 @@ impl Store {
 
     /// The memory as of `commit`, which must be of [`FORMAT`]; `None` is the empty memory.
     fn at(&self, commit: Option<ObjectId>) -> Result<Snapshot<'_>> {
-        let s = self.raw(commit)?;
-        let v = s.format()?;
-        upgrade::readable(v)?;
+        let git = self.git.raw(commit)?;
+        let v = git.format()?;
+        self.git.readable(v)?;
         if v < FORMAT {
             bail!(
                 "This memory is format {v}, older than this ai's {FORMAT}. Run {ME} wake to upgrade it."
             );
         }
-        Ok(s)
-    }
-
-    /// The tree of `commit`, of any format.
-    fn raw(&self, commit: Option<ObjectId>) -> Result<Snapshot<'_>> {
-        let tree = match commit {
-            Some(c) => self.repo.find_commit(c)?.tree_id()?.detach(),
-            None => ObjectId::empty_tree(self.repo.object_hash()),
-        };
-        Ok(Snapshot {
-            store: self,
-            commit,
-            tree,
-            cache: RefCell::default(),
-        })
+        Ok(Snapshot { store: self, git })
     }
 
     /// Applies `change` to the latest snapshot as one commit, redoing it until the ref update wins.
     pub fn mutate<R>(
         &self,
         msg: &str,
-        mut change: impl FnMut(&Snapshot) -> Result<(R, Changes)>,
+        change: impl FnMut(&Snapshot) -> Result<(R, Changes)>,
     ) -> Result<(R, Snapshot<'_>)> {
-        loop {
-            let base = self.snapshot()?;
-            let (r, ch) = change(&base)?;
-            if ch.0.is_empty() {
-                return Ok((r, base));
-            }
-            let commit = self.commit(&base, ch, msg)?;
-            if self.cas(base.commit, commit, msg)? {
-                return Ok((r, self.at(Some(commit))?));
-            }
-        }
-    }
-
-    /// `ch` over `base`, the first commit naming the format.
-    fn commit(&self, base: &Snapshot, mut ch: Changes, msg: &str) -> Result<ObjectId> {
-        if base.commit.is_none() {
-            ch.put(upgrade::PATH.into(), upgrade::blob(FORMAT));
-        }
-        let tree = self.write_tree(base.tree, ch)?;
-        self.new_commit(msg, tree, base.commit)
-    }
-
-    fn write_tree(&self, base: ObjectId, Changes(ch): Changes) -> Result<ObjectId> {
-        let mut ed = self.repo.edit_tree(base)?;
-        for (p, bytes) in ch {
-            let id = self.repo.write_blob(bytes)?;
-            ed.upsert(&p, EntryKind::Blob, id)?;
-        }
-        Ok(ed.write()?.detach())
-    }
-
-    fn new_commit(&self, msg: &str, tree: ObjectId, parent: Option<ObjectId>) -> Result<ObjectId> {
-        let me = self.repo.committer().context("No committer.")??;
-        Ok(self.repo.new_commit_as(me, me, msg, tree, parent)?.id)
-    }
-
-    /// Moves the memory from `from` to `to`; false if another writer moved it first.
-    fn cas(&self, from: Option<ObjectId>, to: ObjectId, msg: &str) -> Result<bool> {
-        let expected = match from {
-            Some(c) => PreviousValue::MustExistAndMatch(Target::Object(c)),
-            None => PreviousValue::MustNotExist,
-        };
-        let edit = RefEdit::update(REF.try_into()?, to, expected, msg);
-        match self.repo.edit_reference(edit) {
-            Ok(_) => Ok(true),
-            Err(_) if self.head()? != from => Ok(false),
-            Err(e) => Err(e.into()),
-        }
+        self.git.mutate(msg, |c| self.at(c), change)
     }
 
     fn edit_config<R>(&self, edit: impl FnOnce(&mut gix::config::File) -> Result<R>) -> Result<R> {
@@ -421,7 +284,7 @@ impl<'a, 's> Edit<'a, 's> {
 
     fn seg(&mut self, path: &str) -> Result<&mut Seg> {
         if !self.segs.contains_key(path) {
-            let seg = Seg::parse(&self.snap.read(path)?)?;
+            let seg = seg(&self.snap.read(path)?)?;
             self.segs.insert(path.into(), seg);
         }
         Ok(self.segs.get_mut(path).expect("inserted above"))
@@ -429,7 +292,7 @@ impl<'a, 's> Edit<'a, 's> {
 
     fn text(&mut self, c: Coord) -> Result<Option<String>> {
         let (path, k) = seg_of(c);
-        Ok(self.seg(&path)?.node(k).map(|n| n.text))
+        Ok(node(self.seg(&path)?, k).map(|n| n.text))
     }
 
     fn put(&mut self, c: Coord, who: &Who, text: &str) -> Result<()> {
@@ -513,67 +376,31 @@ impl<'a, 's> Edit<'a, 's> {
     }
 }
 
-/// A node segment: a column row, then one line per node, empty where not built.
-#[derive(Debug)]
-pub struct Seg {
-    pub cols: Vec<String>,
-    pub lines: Vec<String>,
+/// The node segment stored as `b`: a column row ending in `text` and holding `ts`, then one
+/// line per node, empty where not built. None is an empty one under [`COLUMNS`].
+pub fn seg(b: &[u8]) -> Result<Seg> {
+    let corrupt = || anyhow!("A tree segment is corrupt.");
+    let seg = Seg::parse(b, &COLUMNS).ok_or_else(corrupt)?;
+    if seg.cols.last().is_none_or(|c| c != "text") || !seg.cols.iter().any(|c| c == "ts") {
+        return Err(corrupt());
+    }
+    Ok(seg)
 }
 
-impl Default for Seg {
-    fn default() -> Seg {
-        Seg {
-            cols: COLUMNS.map(String::from).to_vec(),
-            lines: Vec::new(),
-        }
-    }
-}
-
-impl Seg {
-    /// The segment stored as `b`; none is an empty one under [`COLUMNS`].
-    fn parse(b: &[u8]) -> Result<Seg> {
-        if b.is_empty() {
-            return Ok(Seg::default());
-        }
-        let corrupt = || anyhow!("A tree segment is corrupt.");
-        let s = std::str::from_utf8(b).map_err(|_| corrupt())?;
-        let mut lines = s.strip_suffix('\n').unwrap_or(s).split('\n');
-        let cols: Vec<String> = lines
-            .next()
-            .unwrap_or("")
-            .split(' ')
-            .map(String::from)
-            .collect();
-        if cols.last().is_none_or(|c| c != "text") || !cols.iter().any(|c| c == "ts") {
-            return Err(corrupt());
-        }
-        Ok(Seg {
-            cols,
-            lines: lines.map(String::from).collect(),
-        })
-    }
-
-    pub fn bytes(&self) -> Vec<u8> {
-        let mut s = self.cols.join(" ");
-        for l in &self.lines {
-            s.push('\n');
-            s += l;
-        }
-        s.push('\n');
-        s.into_bytes()
-    }
-
-    fn node(&self, k: usize) -> Option<Node> {
-        Node::decode(self.lines.get(k)?, &self.cols)
-    }
+fn node(seg: &Seg, k: usize) -> Option<Node> {
+    Node::decode(seg.lines.get(k)?, &seg.cols)
 }
 
 /// The memory as of one commit: every read through it sees the same state.
 pub struct Snapshot<'s> {
     store: &'s Store,
-    commit: Option<ObjectId>,
-    tree: ObjectId,
-    cache: RefCell<HashMap<String, Rc<[u8]>>>,
+    git: Snap<'s>,
+}
+
+impl<'s> AsRef<Snap<'s>> for Snapshot<'s> {
+    fn as_ref(&self) -> &Snap<'s> {
+        &self.git
+    }
 }
 
 impl Snapshot<'_> {
@@ -581,84 +408,32 @@ impl Snapshot<'_> {
         &self.store.cfg
     }
 
-    /// The format its `format` blob names; the empty memory is of [`FORMAT`].
-    fn format(&self) -> Result<u32> {
-        match self.commit {
-            Some(_) => upgrade::parse(&self.read(upgrade::PATH)?),
-            None => Ok(FORMAT),
-        }
-    }
-
-    fn entry(&self, path: &str) -> Result<Option<ObjectId>> {
-        let root = self.store.repo.find_tree(self.tree)?;
-        Ok(root.lookup_entry_by_path(path)?.map(|e| e.object_id()))
-    }
-
     pub(crate) fn fetch(&self, id: ObjectId) -> Result<Vec<u8>> {
-        Ok(self.store.repo.find_blob(id)?.take_data())
+        self.git.fetch(id)
     }
 
     /// The blob at `path`, empty if absent; cached.
     pub fn read(&self, path: &str) -> Result<Rc<[u8]>> {
-        if let Some(b) = self.cache.borrow().get(path) {
-            return Ok(b.clone());
-        }
-        let b: Rc<[u8]> = match self.entry(path)? {
-            Some(id) => self.fetch(id)?.into(),
-            None => Rc::from([]),
-        };
-        self.cache.borrow_mut().insert(path.into(), b.clone());
-        Ok(b)
-    }
-
-    /// A tree's entries by their hex names, in order.
-    fn entries(&self, tree: ObjectId) -> Result<Vec<(u64, ObjectId)>> {
-        let t = self.store.repo.find_tree(tree)?;
-        t.decode()?
-            .entries
-            .iter()
-            .map(|e| {
-                let name = e.filename.to_string();
-                let n = u64::from_str_radix(&name, 16)
-                    .with_context(|| format!("An entry is misnamed: {name}."))?;
-                Ok((n, e.oid.to_owned()))
-            })
-            .collect()
+        self.git.read(path)
     }
 
     /// Every blob under the fanned-out `dir`, with its number.
     pub(crate) fn walk(
         &self,
         dir: &str,
-        mut each: impl FnMut(u64, ObjectId) -> Result<()>,
+        each: impl FnMut(u64, ObjectId) -> Result<()>,
     ) -> Result<()> {
-        let Some(top) = self.entry(dir)? else {
-            return Ok(());
-        };
-        for (hi, sub) in self.entries(top)? {
-            for (lo, id) in self.entries(sub)? {
-                each(hi << 8 | lo, id)?;
-            }
-        }
-        Ok(())
+        self.git.walk(dir, each)
     }
 
     /// How many messages the log holds.
     pub fn log_len(&self) -> Result<u64> {
-        let Some(top) = self.entry(LOG)? else {
-            return Ok(0);
-        };
-        let Some(&(hi, sub)) = self.entries(top)?.last() else {
-            return Ok(0);
-        };
-        let Some(&(lo, _)) = self.entries(sub)?.last() else {
-            return Ok(0);
-        };
-        Ok((hi << 8 | lo) + 1)
+        self.git.count(LOG)
     }
 
     pub fn message(&self, i: u64) -> Result<Message> {
         let id = self
+            .git
             .entry(&fan_path(LOG, i))?
             .with_context(|| format!("Message {i} is missing from the log."))?;
         Message::decode(&self.fetch(id)?).with_context(|| format!("Message {i}"))
@@ -682,20 +457,20 @@ impl Snapshot<'_> {
     /// Node `c`, if built.
     pub fn node(&self, c: Coord) -> Result<Option<Node>> {
         let (path, k) = seg_of(c);
-        Ok(Seg::parse(&self.read(&path)?)?.node(k))
+        Ok(node(&seg(&self.read(&path)?)?, k))
     }
 
     /// Every node of level `l`, by index; `None` where not built.
     pub fn level(&self, l: u32) -> Result<Vec<Option<Node>>> {
         let mut out = Vec::new();
         self.walk(&level_dir(l), |s, id| {
-            let seg = Seg::parse(&self.fetch(id)?)?;
+            let seg = seg(&self.fetch(id)?)?;
             for k in 0..seg.lines.len() {
                 let i = (s * SEG) as usize + k;
                 if out.len() <= i {
                     out.resize(i + 1, None);
                 }
-                out[i] = seg.node(k);
+                out[i] = node(&seg, k);
             }
             Ok(())
         })?;

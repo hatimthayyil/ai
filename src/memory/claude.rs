@@ -18,9 +18,9 @@ use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
-use crate::memory::{
-    backend::{Backend, Block, Conversation},
-    store::AtPath,
+use crate::{
+    file::AtPath,
+    memory::backend::{Backend, Block, Conversation},
 };
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(300);

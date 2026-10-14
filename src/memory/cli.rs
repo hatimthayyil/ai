@@ -12,24 +12,27 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use tracing::{error, info, info_span};
 
-use crate::memory::{
-    backend::Backend,
-    claude::{self, ClaudeCode},
-    compact::{Compactor, GaveUp, Options},
-    config::Knob,
-    cover::{self, cover},
-    grep::{Grep, grep},
-    hook::{REMINDED, hook},
-    log,
-    meta::{Line, Meta, dash, dated, parts},
-    prov,
-    record::{Kind, Message, Place, Who, midnight},
-    stats::{Stats, stats},
-    store::{AtPath, ME, Snapshot, Store, pretty},
-    tree::Coord,
-    usage::{self, Tally, Use},
-    view::{Mem, PLACEHOLDER, VIEW},
-    zoom::{page, zoom},
+use crate::{
+    file::{AtPath, pretty},
+    memory::{
+        backend::Backend,
+        claude::{self, ClaudeCode},
+        compact::{Compactor, GaveUp, Options},
+        config::Knob,
+        cover::{self, cover},
+        grep::{Grep, grep},
+        hook::{REMINDED, hook},
+        log,
+        meta::{Line, Meta, dash, dated, parts},
+        prov,
+        record::{Kind, Message, Place, Who, midnight},
+        stats::{Stats, stats},
+        store::{ME, Snapshot, Store},
+        tree::Coord,
+        usage::{self, Tally, Use},
+        view::{Mem, PLACEHOLDER, VIEW},
+        zoom::{page, zoom},
+    },
 };
 
 const TEMPLATE: &str = "\

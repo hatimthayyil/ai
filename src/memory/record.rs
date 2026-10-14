@@ -1,6 +1,8 @@
 use anyhow::Result;
 use jiff::{civil::DateTime, tz::TimeZone};
 
+use crate::record;
+
 const TS: &str = "%Y%m%dT%H%M%SZ";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, clap::ValueEnum)]
@@ -129,24 +131,16 @@ impl Message {
             ("model", &w.model),
             ("session", &w.session),
         ];
-        let mut s = String::new();
-        for (k, v) in fields.into_iter().filter(|(_, v)| !v.is_empty()) {
-            s += &format!("{k} {}\n", field(v));
-        }
-        s.push('\n');
-        s += &self.text;
-        s.into_bytes()
+        record::encode(fields.map(|(k, v)| (k, field(v))), &self.text)
     }
 
     /// Needs `ts`, `kind` and `origin`; other fields absent are empty, unknown ones ignored.
     pub fn decode(b: &[u8]) -> Result<Message> {
         let corrupt = || anyhow::anyhow!("A message is corrupt.");
-        let s = std::str::from_utf8(b).map_err(|_| corrupt())?;
-        let (head, text) = s.split_once("\n\n").ok_or_else(corrupt)?;
+        let (fields, text) = record::decode(b).ok_or_else(corrupt)?;
         let mut m = Message::new(Kind::Note, text);
         let mut kind = None;
-        for line in head.split('\n') {
-            let (k, v) = line.split_once(' ').ok_or_else(corrupt)?;
+        for (k, v) in fields {
             if k == "kind" {
                 let new = Kind::parse(v).ok_or_else(corrupt)?;
                 if kind.replace(new).is_some() {
