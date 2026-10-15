@@ -1,0 +1,21 @@
+ai/backlog.md
+  s_77b04d9838f161::t_dc661f93e531a1 3-8
+ai/research/20261014T002322---chat-design.md
+  s_77b04d9838f161::t_b9453c423bd95f 3,22,25,27,31,35-43,47-49,55,57-58,60,63-75,78,80-82,84-96,100-105,107,109,114-115,121,123-125,130-131,133,141-142,146,148,152-154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "694f136d8eda898a8c7a03ab1e66b7fa95615712",
+  "prompts": {},
+  "sessions": {
+    "s_77b04d9838f161": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "799603ff-89ac-4e8a-9cfb-a9648c74f1fc",
+        "model": "unknown"
+      },
+      "human_author": "Hatim Thayyil <hatim@thayyil.net>"
+    }
+  }
+}
