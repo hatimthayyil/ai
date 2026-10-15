@@ -34,6 +34,7 @@ Lines
 
 Queries
 - `Chat::list`: per thread its newest item (harness, session, time) and tips, from the index only. `Snapshot::tree` and `model::Tree::path`/`branch` give the item tree and the path to a tip; `Snapshot::tip(harness, session)` the newest tip of a session; `Snapshot::line`/`lines` lines by key and by level.
+- `Thread::snapshot_at`: the thread as of one of its commits (`Snapshot::as_ref().commit()`), so the parts of a paged view all read one state.
 - A `Snapshot` borrows its `Thread`: bind the thread first (`let t = chat.thread(name)?; let s = t.snapshot()?;`).
 
 Measured (release, read-only on the user's transcripts; counts and timings only)

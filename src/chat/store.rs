@@ -208,6 +208,11 @@ impl Thread {
         self.at(self.git.head()?)
     }
 
+    /// The thread as of `commit`, one of its commits.
+    pub fn snapshot_at(&self, commit: ObjectId) -> Result<Snapshot<'_>> {
+        self.at(Some(commit))
+    }
+
     fn at(&self, commit: Option<ObjectId>) -> Result<Snapshot<'_>> {
         let git = self.git.raw(commit)?;
         self.git.readable(git.format()?)?;
