@@ -1,0 +1,61 @@
+ai/comments/tests/rollup.rs.md
+  s_77b04d9838f161::t_2849ceeef53c5f 5,7
+src/chat/claude.rs
+  s_77b04d9838f161::t_2849ceeef53c5f 407,440,447,460,662
+  s_77b04d9838f161::t_87fad00daaec2a 575
+src/chat/mod.rs
+  s_77b04d9838f161::t_2849ceeef53c5f 13
+src/chat/rollup.rs
+  s_77b04d9838f161::t_2849ceeef53c5f 5,14,93,98-100,113,123,128,131-132,137,140,145,167,169,173,202-203,205,217,227,233,241,270,278,292,323,344,366
+tests/chat.rs
+  s_77b04d9838f161::t_2849ceeef53c5f 432,435
+  s_77b04d9838f161::t_2425e74d82799a 438-439
+tests/chat_cli.rs
+  s_77b04d9838f161::t_2849ceeef53c5f 8,156,194,217-218,223,315,322,324,329,337,384,516
+src/chat/view.rs
+  s_77b04d9838f161::t_2849ceeef53c5f 7,20,29,31,81,108-110,115-116,126,146-147,164,169,227,243,247,252,258,357,378,433,437,589,631,641,665-666,678,692,711,763-764,799,808,812
+ai/comments/src/chat/prompts/compact.txt.md
+  s_77b04d9838f161::t_2849ceeef53c5f 7
+src/chat/record.rs
+  s_77b04d9838f161::t_2849ceeef53c5f 69,71-72,471
+  s_77b04d9838f161::t_87fad00daaec2a 79
+ai/comments/src/chat/model.rs.md
+  s_77b04d9838f161::t_2849ceeef53c5f 10-11
+ai/comments/plugins/claude/hooks/register.ts.md
+  s_77b04d9838f161::t_2849ceeef53c5f 14,23,25
+ai/comments/src/chat/store.rs.md
+  s_77b04d9838f161::t_2849ceeef53c5f 24,33-34
+ai/glossary.md
+  s_77b04d9838f161::t_2849ceeef53c5f 38-39,45,47-48,50-52,55-56
+  s_77b04d9838f161::t_e9a08a9cfbc4d3 37
+src/chat/prompts/compact.txt
+  s_77b04d9838f161::t_2849ceeef53c5f 3-4,10
+ai/comments/src/chat/view.rs.md
+  s_77b04d9838f161::t_2849ceeef53c5f 6-7,10,12,15-16,19,22-24,29
+tests/rollup.rs
+  s_77b04d9838f161::t_2849ceeef53c5f 78-79,180,182,268,287,300-301,305-306,321,341-342,344-345,362,387,401,427-430,433-434,470,491-492,495,518,546,569,607,642,645,662
+ai/comments/src/chat/nap.rs.md
+  s_77b04d9838f161::t_2849ceeef53c5f 29
+ai/comments/src/chat/rollup.rs.md
+  s_77b04d9838f161::t_2849ceeef53c5f 10-11,15-19,21
+ai/comments/tests/chat_cli.rs.md
+  s_77b04d9838f161::t_2849ceeef53c5f 5,9,12
+src/chat/model.rs
+  s_77b04d9838f161::t_2849ceeef53c5f 121,130-131,150,228,249,255,263-264
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0259896706c61b05bb2259ef16eeae530674311d",
+  "prompts": {},
+  "sessions": {
+    "s_77b04d9838f161": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "799603ff-89ac-4e8a-9cfb-a9648c74f1fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Hatim Thayyil <hatim@thayyil.net>"
+    }
+  }
+}
