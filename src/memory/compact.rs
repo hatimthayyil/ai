@@ -46,9 +46,13 @@ pub struct Job {
     pub step: Step,
 }
 
+/// What every task starts with: [`SCALE`] as the size of a line.
+pub fn ruler() -> String {
+    format!("For scale only, this meaningless filler is exactly {NODE} bytes:\n{SCALE}\n\n")
+}
+
 fn step_text(step: &Step) -> String {
-    let scale =
-        format!("For scale only, this meaningless filler is exactly {NODE} bytes:\n{SCALE}\n\n");
+    let scale = ruler();
     match step {
         Step::Compress(m) => {
             format!("{scale}Compress this message into one line, in at most {NODE} bytes:\n{m}")
@@ -74,16 +78,27 @@ pub fn retry_text(line: &str) -> String {
     )
 }
 
-/// Builds one node: the line the model writes, retried in the same conversation while
-/// over [`NODE`] bytes, up to [`TRIES`]; the shortest try wins. Returns who wrote it, and the line.
+/// Builds one node with [`write_line`]. Returns who wrote it, and the line.
 pub fn summarize(backend: &dyn Backend, job: &Job) -> Result<(Who, String)> {
-    let mut conv = backend.open(COMPACT)?;
-    let mut reply = conv.say(&message(job))?;
+    write_line(backend, COMPACT, &message(job), &job.node)
+}
+
+/// The line the model writes for `message` under the system prompt `system`, retried in the
+/// same conversation while over [`NODE`] bytes, up to [`TRIES`]; the shortest try wins.
+/// Returns who wrote it, and the line; `node` names it in the log.
+pub fn write_line(
+    backend: &dyn Backend,
+    system: &str,
+    message: &[Block],
+    node: &dyn fmt::Display,
+) -> Result<(Who, String)> {
+    let mut conv = backend.open(system)?;
+    let mut reply = conv.say(message)?;
     let mut tries: Vec<String> = Vec::new();
     loop {
         let line = flat(reply.trim());
         if line.len() > NODE {
-            warn!(node = %job.node, bytes = line.len(), attempt = tries.len() + 1, "over limit");
+            warn!(node = %node, bytes = line.len(), attempt = tries.len() + 1, "over limit");
         }
         if line.is_empty() {
             bail!("empty reply");

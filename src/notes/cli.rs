@@ -428,7 +428,7 @@ fn nap(s: &Store, out: &mut dyn Write, rt: &Runtime) -> Result<ExitCode> {
         writeln!(out, "Nothing to build.")?;
         return Ok(ExitCode::SUCCESS);
     }
-    let _log = log::init(&s.git_dir())?;
+    let _log = log::init(&s.git_dir().join(log::NAP_LOG))?;
     let _nap = info_span!(
         "nap",
         pid = process::id(),

@@ -1,9 +1,8 @@
 use std::{
     fs,
     io::{self, Write},
-    os::unix::process::CommandExt,
     path::{Path, PathBuf},
-    process::{self, ExitCode, Stdio},
+    process::{self, ExitCode},
     sync::Arc,
     time::Instant,
 };
@@ -208,17 +207,9 @@ impl Default for Runtime {
 /// Starts `ai <tool> nap` on the store at `dir` (named to it by `$var`), detached; it logs to
 /// `nap.log` in `log_dir`, its stderr too.
 pub fn spawn_nap(tool: &str, var: &str, dir: &Path, log_dir: &Path) -> Result<()> {
-    let exe = std::env::current_exe().context("Cannot find this program to start a nap.")?;
-    process::Command::new(exe)
-        .args([tool, "nap"])
-        .env(var, dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(log::open(log_dir)?)
-        .process_group(0)
-        .spawn()
-        .context("Cannot start a nap.")?;
-    Ok(())
+    log::spawn(&log_dir.join(log::NAP_LOG), |c| {
+        c.args([tool, "nap"]).env(var, dir)
+    })
 }
 
 /// `$var`, else `~/.ai/<name>`.
@@ -479,7 +470,7 @@ fn pending(s: &Store) -> Result<bool> {
 }
 
 fn nap(s: &Store, out: &mut dyn Write, rt: &Runtime) -> Result<ExitCode> {
-    let _log = log::init(s.dir())?;
+    let _log = log::init(&s.dir().join(log::NAP_LOG))?;
     let _nap = info_span!(
         "nap",
         pid = process::id(),
