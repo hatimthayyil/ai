@@ -18,9 +18,6 @@ In session
 - `attach`/`detach`: one-line confirmations. `attach` reports a new thread and the thread it moved from.
 
 Internal
-- `sync`: no output; when items were added, starts the background compactor.
-- `compact`: sync, the fold's unbuilt lines built by the roll-up until `WAIT` (60 s), then the view on stdout, whole (the plugin sends it as one message). A build error fails the command, so the plugin compacts natively and shows the reason.
-- `nap --thread <name>`: the roll-up's entry point.
-- `AI_CHAT_NAP=0` stops `sync` and `attach` from starting the background compactor (tests set it, as `AI_MEMORY_NAP`).
-
-The roll-up's functions are stubs until its branch lands (stub.rs.md).
+- `sync` (and `attach`): no output; when items were added, `Chat::spawn_nap` starts the background compactor, unless the git config `ai.chat.nap` is false (nap.rs.md; the only switch).
+- `compact`: sync, then `nap::build` of the fold's unbuilt lines with the configured model (`Chat::backend`) until `WAIT` (60 s), then the view on stdout, whole (the plugin sends it as one message). Lines that fail stay placeholders (the thread's log has why). An error (no `claude` on `PATH`, a store error) fails the command, so the plugin compacts natively and shows the reason.
+- `nap --thread <name>`: `nap::nap` with the configured model. Prints the failed lines, then `Built N lines, M by the model.` or `Nothing built.`, or that another compactor holds the lock; exit 1 if a line failed. Spawned by sync, its stdout is null and its stderr the log.

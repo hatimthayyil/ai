@@ -85,15 +85,17 @@ pub struct Built {
 }
 
 /// Builds `keys` and the unbuilt lines they are made from, up to [`JOBS`] calls at once,
-/// until they are built, `deadline` passes, or failures leave nothing to start. Calls still
-/// running at the deadline are stopped through `backend`. A key that is no line of the thread
-/// is an error.
+/// until they are built, `deadline` passes, or failures leave nothing to start; logs to
+/// [`Thread::log_path`]. Calls still running at the deadline are stopped through `backend`. A
+/// key that is no line of the thread is an error.
 pub fn build(
     thread: &Thread,
     backend: Arc<dyn Backend>,
     keys: &[Key],
     deadline: Instant,
 ) -> Result<Built> {
+    let _log = log::init(&thread.log_path()?)?;
+    let _build = info_span!("build", pid = process::id(), thread = thread.name()).entered();
     let mut run = Run::new(thread, backend);
     run.pass(Some(keys), Some(deadline))?;
     Ok(run.built.clone())

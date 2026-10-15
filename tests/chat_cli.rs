@@ -11,16 +11,16 @@ use ai_tools::{
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
-const ISOLATE: [&str; 6] = [
+const ISOLATE: [&str; 5] = [
     "CLAUDE_CODE_SESSION_ID",
     "CLAUDECODE",
     "GIT_DIR",
     "GIT_AUTHOR_NAME",
     "GIT_COMMITTER_NAME",
-    "AI_CHAT_NAP",
 ];
 
-/// A git repository, a Claude Code config dir and a fake `claude`, in a temporary directory.
+/// A git repository with the background compactor off, a Claude Code config dir and a fake
+/// `claude`, in a temporary directory.
 struct Sandbox {
     _tmp: TempDir,
     root: PathBuf,
@@ -31,6 +31,12 @@ impl Sandbox {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().canonicalize().unwrap();
         gix::init(root.join("repo")).unwrap();
+        let off = Command::new("git")
+            .args(["config", "ai.chat.nap", "false"])
+            .current_dir(root.join("repo"))
+            .status()
+            .unwrap();
+        assert!(off.success());
         for d in ["home", "claude", "out", "bin"] {
             fs::create_dir(root.join(d)).unwrap();
         }
@@ -110,7 +116,6 @@ impl Sandbox {
             .env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CEILING_DIRECTORIES", &self.root)
-            .env("AI_CHAT_NAP", "0")
             .env(
                 "PATH",
                 format!("{}:{path}", self.root.join("bin").display()),
@@ -319,7 +324,11 @@ fn compact_syncs_and_prints_the_view() {
     let fold = section(&view, "Earlier exchanges, summarized");
     assert_eq!(fold.len(), 3);
     assert!(fold[0].ends_with("|user asked to run the tests; two failed"));
-    assert!(fold[1].ends_with("(not summarized yet: zoom 4-10)"));
+    assert!(
+        fold[1].starts_with("4-10|4|user: Skip the network tests. 5|ai: "),
+        "compact built the short exchange as its own line: {fold:#?}"
+    );
+    assert!(fold[2].starts_with("11-13|11|user: Don't commit yet."));
     let rail = section(&view, "The user's latest messages");
     assert!(
         rail.iter()

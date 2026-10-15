@@ -3,9 +3,9 @@ mod cli;
 pub mod model;
 mod nap;
 mod record;
+pub mod render;
 pub mod rollup;
 mod store;
-mod stub;
 mod sync;
 mod view;
 

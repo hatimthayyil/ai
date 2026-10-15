@@ -4,8 +4,10 @@ use anyhow::Result;
 
 use crate::{
     chat::{
-        model::{Exchange, Item, Kind, Marker, Tree, exchanges},
+        model::{Exchange, Item, Kind, Tree},
         record::Key,
+        render::{Cut, item_line},
+        rollup,
         store::Snapshot,
     },
     memory::{Coord, flat},
@@ -37,8 +39,8 @@ thread. `n|` is item n, cut where it says so. `a-b|` summarizes items a to b; ol
 more.
 
 Zoom a line before you act on it, guess or ask: `ai chat zoom a-b` opens it into the lines it \
-was made from, down to the items; `ai chat zoom n` prints item n whole. Long output comes in \
-parts: run the command each part ends with.
+was made from, down to the items; `ai chat zoom n` prints item n whole. `#n` in a summary names \
+item n, where its detail is. Long output comes in parts: run the command each part ends with.
 
 Summaries keep little tool output: say in your replies what you learned that will matter later.
 ";
@@ -111,33 +113,34 @@ pub struct Branch {
     /// The sequence numbers from the root to the tip, increasing.
     path: Vec<usize>,
     xs: Vec<Exchange>,
+    /// Each exchange's chunks, as the roll-up cuts it.
+    cuts: Vec<Vec<Range<usize>>>,
     lines: HashMap<Key, String>,
 }
 
 impl Branch {
     /// The branch ending at item `tip`, none for no item, with `lines` by key.
     pub fn new(tree: Tree, tip: Option<u64>, lines: HashMap<Key, String>) -> Branch {
-        let path = tip.map_or_else(Vec::new, |t| tree.branch(t as usize));
-        let items: Vec<&Item> = path.iter().map(|&i| &tree.items()[i]).collect();
-        let xs = exchanges(&items);
+        let b = tip.map(|t| rollup::branch(&tree, t as usize));
+        let (path, parts) = b.map_or_else(Default::default, |b| (b.seqs, b.parts));
+        let (xs, cuts) = parts.into_iter().map(|p| (p.exchange, p.chunks)).unzip();
         Branch {
             tree,
             path,
             xs,
+            cuts,
             lines,
         }
     }
 
-    /// The branch of `s` ending at item `tip`, with every line that could lie on it.
+    /// The branch of `s` ending at item `tip`, with every line of the thread.
     pub fn load(s: &Snapshot, tip: Option<u64>) -> Result<Branch> {
-        let mut b = Branch::new(s.tree()?, tip, HashMap::new());
-        let top = 1 + usize::BITS - b.xs.len().leading_zeros();
-        for level in 0..=top {
-            for (last, line) in s.lines(level)? {
-                b.lines.insert(Key { level, last }, line.text);
-            }
-        }
-        Ok(b)
+        let lines = s
+            .all_lines()?
+            .into_iter()
+            .map(|(k, l)| (k, l.text))
+            .collect();
+        Ok(Branch::new(s.tree()?, tip, lines))
     }
 
     /// The view: the instruction, the fold over the closed exchanges, the user rail and the
@@ -255,26 +258,22 @@ impl Branch {
     /// The chunk lines built in exchange `e`, consecutive from its first step, each with the
     /// positions it covers.
     fn chunks(&self, e: usize) -> Vec<(Range<usize>, &str)> {
-        let body = self.body(e);
-        let mut from = body;
-        let mut out = Vec::new();
-        for p in body..self.xs[e].span.end {
-            let key = Key {
-                level: 0,
-                last: self.seq(p),
-            };
-            if let Some(t) = self.lines.get(&key) {
-                out.push((from..p + 1, t.as_str()));
-                from = p + 1;
-            }
-        }
-        out
+        self.cuts[e]
+            .iter()
+            .map_while(|r| {
+                let key = Key {
+                    level: 0,
+                    last: self.seq(r.end - 1),
+                };
+                Some((r.clone(), self.lines.get(&key)?.as_str()))
+            })
+            .collect()
     }
 
     /// Item `p` as a line, its words cut to `words` bytes and its tool input or output to
     /// [`TOOL`]; whole if `None`.
     fn item_line(&self, p: usize, words: Option<usize>) -> String {
-        item_line(self.seq(p), self.item(p), words)
+        item_line(self.seq(p), self.item(p), cut(words))
     }
 
     fn line(&self, r: &Range<usize>, text: &str) -> String {
@@ -470,47 +469,13 @@ pub fn zoom(s: &Snapshot, id: Id) -> Result<Option<String>> {
     Ok(Branch::load(s, Some(id.last))?.open(id))
 }
 
-/// Item `seq` as a line, `seq|kind: text`; with `words`, its words cut to that many bytes and
-/// its tool input or output to [`TOOL`].
-fn item_line(seq: u64, item: &Item, words: Option<usize>) -> String {
-    let tool = words.map(|w| w.min(TOOL));
-    let (label, text, max) = match &item.kind {
-        Kind::User(t) => ("user".to_string(), t.clone(), words),
-        Kind::Work { from, text } => (format!("work from {from}"), text.clone(), words),
-        Kind::Text(t) => ("ai".into(), t.clone(), words),
-        Kind::ToolCall { name, input, .. } => (format!("call {name}"), input.to_string(), tool),
-        Kind::ToolResult {
-            output, is_error, ..
-        } => {
-            let label = if *is_error { "error" } else { "result" };
-            (label.into(), output.clone(), tool)
-        }
-        Kind::Marker(m) => {
-            let what = match m {
-                Marker::Compaction => "the harness compacted its context here",
-                Marker::Summary => "the harness's summary of the context it compacted",
-                Marker::Interrupt => "interrupted by the user",
-            };
-            return format!("{seq}|[{what}]");
-        }
-    };
-    let text = match max {
-        Some(max) => clip(&text, max, seq),
-        None => text,
-    };
-    format!("{seq}|{label}: {text}")
-}
-
-/// `s` in at most about `max` bytes: its head and tail around a note on what was cut from
-/// item `seq`.
-fn clip(s: &str, max: usize, seq: u64) -> String {
-    if s.len() <= max {
-        return s.into();
-    }
-    let head = &s[..s.floor_char_boundary(max / 2)];
-    let tail = &s[s.ceil_char_boundary(s.len() - max / 2)..];
-    let cut = s.len() - head.len() - tail.len();
-    format!("{head} [... {cut} bytes cut: zoom {seq} ...] {tail}")
+/// With `words`, an item's words cut to that many bytes and its tool input or output to
+/// [`TOOL`]; whole if `None`.
+fn cut(words: Option<usize>) -> Option<Cut> {
+    words.map(|w| Cut {
+        words: w,
+        tool: w.min(TOOL),
+    })
 }
 
 /// The bytes `lines` take, one newline each.
@@ -531,7 +496,7 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
-    use crate::chat::model::SourceId;
+    use crate::chat::model::{Marker, SourceId};
 
     fn source(entry: usize) -> SourceId {
         SourceId {
@@ -667,20 +632,33 @@ mod tests {
         );
     }
 
+    /// Item `i` says `m<i>`, padded to about `pad(i)` bytes.
+    fn padded(pad: impl Fn(usize) -> usize) -> impl Fn(usize) -> String {
+        move |i| format!("m{i}{}", " x".repeat(pad(i) / 2))
+    }
+
     #[test]
     fn an_unbuilt_exchange_shows_its_message_and_chunks() {
-        let b = branch(
-            chain("utcrcrtcrut", short),
-            &[(0, 3, "read the config"), (0, 5, "ran the tests")],
-        );
+        // Three steps of a 20 KB reply: over the roll-up's 48 KB input, cut 1-6 and 7-9.
+        let text = padded(|i| if [1, 4, 7].contains(&i) { 20_000 } else { 0 });
+        let render =
+            |lines: &[(u32, u64, &str)]| branch(chain("utcrtcrtcrut", &text), lines).render(VIEW);
         assert_eq!(
-            b.render(VIEW),
+            render(&[(0, 6, "read the config")]),
             [
                 "0|user: m0",
-                "1-3|read the config",
-                "4-5|ran the tests",
-                "6-8|(not summarized yet: zoom 6-8)",
+                "1-6|read the config",
+                "7-9|(not summarized yet: zoom 7-9)",
             ]
+        );
+        assert_eq!(
+            render(&[(0, 6, "read the config"), (0, 9, "ran the tests")]),
+            ["0|user: m0", "1-6|read the config", "7-9|ran the tests"]
+        );
+        assert_eq!(
+            render(&[(0, 9, "ran the tests")]),
+            ["0-9|(not summarized yet: zoom 0-9)"],
+            "chunk lines count from the first"
         );
     }
 
@@ -757,10 +735,12 @@ mod tests {
             "a step too big for the budget keeps its newest items"
         );
 
-        let lines = [(0, 3, "read it"), (0, 5, "ran it")];
-        let open = branch(chain("utcrcrcr", text), &lines).current();
-        assert_eq!(ids(&open), ["0", "1-3", "4-5", "6", "7"]);
-        assert_eq!(open[1..3], ["1-3|read it", "4-5|ran it"]);
+        // Four steps of a 20 KB reply: chunks 1-6 and 7-12, the second still open.
+        let text = padded(|i| if i % 3 == 1 { 20_000 } else { 0 });
+        let lines = [(0, 6, "read it")];
+        let open = branch(chain("utcrtcrtcrtcr", text), &lines).current();
+        assert_eq!(ids(&open), ["0", "1-6", "7", "8", "9", "10", "11", "12"]);
+        assert_eq!(open[1], "1-6|read it");
     }
 
     #[test]
@@ -781,8 +761,19 @@ mod tests {
 
     #[test]
     fn zoom_opens_nodes_exchanges_and_chunks() {
+        // Exchange 4-8 holds two steps of about 28 and 24 KB: over 48 KB, cut 5-7 and 8.
+        let text = padded(|i| match i {
+            5 | 8 => 24_000,
+            7 => 10_000,
+            _ => 0,
+        });
+        let ids = |s: String| -> Vec<String> {
+            s.lines()
+                .map(|l| l.split(['|', ' ']).take(2).collect::<Vec<_>>().join(" "))
+                .collect()
+        };
         let open = |tip: usize, first: u64| {
-            let mut items = chain("utututcrtutut", short);
+            let mut items = chain("utututcrtutut", &text);
             items.truncate(tip + 1);
             let lines = [
                 (1, 1, "one"),
@@ -803,19 +794,17 @@ mod tests {
             "a node opens into its halves, an unbuilt half into what is built under it"
         );
         assert_eq!(
-            open(8, 4).unwrap(),
-            "4|user: m4\n5-7|ran\n8|ai: m8",
+            ids(open(8, 4).unwrap()),
+            ["4 user:", "5-7 ran", "8 ai:"],
             "an exchange: its message, chunk lines, items"
         );
         assert_eq!(
-            open(7, 5).unwrap(),
-            "5|ai: m5\n6|call Bash: \"m6\"\n7|result: m7",
+            ids(open(7, 5).unwrap()),
+            ["5 ai:", "6 call", "7 result:"],
             "a chunk: its items"
         );
-        assert_eq!(
-            open(8, 6).unwrap(),
-            "6|call Bash: \"m6\"\n7|result: m7\n8|ai: m8"
-        );
+        assert!(open(7, 5).unwrap().contains("\n6|call Bash: m6\n"));
+        assert_eq!(ids(open(8, 6).unwrap()), ["6 call", "7 result:", "8 ai:"]);
         assert_eq!(open(5, 0), None, "three exchanges are no line");
         assert_eq!(
             open(3, 1),

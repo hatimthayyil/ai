@@ -138,7 +138,8 @@ impl Repo {
 }
 
 /// A model that answers each call with a 300-byte line naming its verb and the first and last
-/// item number in its input, so lines show what they cover and two never merge free.
+/// item number in its input (`n|` items, `#n` in lines), so lines show what they cover and two
+/// never merge free.
 struct Fake {
     delay: Duration,
     fail: Box<dyn Fn(&str) -> bool + Send + Sync>,
@@ -185,10 +186,10 @@ fn reply(task: &str) -> String {
     .find(|v| task.contains(v.0))
     .expect("a known task")
     .1;
-    let nums: Vec<&str> = Regex::new(r"#(\d+)")
+    let nums: Vec<&str> = Regex::new(r"(?m)^(\d+)\||#(\d+)")
         .unwrap()
         .captures_iter(input)
-        .map(|c| c.get(1).unwrap().as_str())
+        .map(|c| c.get(1).or(c.get(2)).unwrap().as_str())
         .collect();
     let line = format!("{verb} #{}..#{}", nums[0], nums[nums.len() - 1]);
     format!("{line:.<300}")
@@ -282,12 +283,12 @@ fn short_exchanges_and_their_nodes_are_free_lines() {
         l.keys().copied().collect::<Vec<_>>(),
         [key(1, a), key(1, b), key(2, b)]
     );
-    assert_eq!(l[&key(1, a)].text, "#0 user: hi #1 ai: Hello.");
+    assert_eq!(l[&key(1, a)].text, "0|user: hi 1|ai: Hello.");
     assert_eq!(l[&key(1, a)].kind, LineKind::Exchange);
     assert_eq!(l[&key(1, a)].who.model, "");
     assert_eq!(
         l[&key(2, b)].text,
-        "#0 user: hi #1 ai: Hello. #2 user: thanks #3 ai: Welcome."
+        "0|user: hi 1|ai: Hello. 2|user: thanks 3|ai: Welcome."
     );
     assert_eq!(l[&key(2, b)].kind, LineKind::Node);
 }
@@ -377,7 +378,7 @@ fn every_level_is_built_and_only_once() {
         .iter()
         .filter(|t| t.contains("part of a long"))
         .collect();
-    let context = format!("<context>\n#{big} user: read every file\n</context>");
+    let context = format!("<context>\n{big}|user: read every file\n</context>");
     assert!(chunk_tasks.iter().all(|t| t.contains(&context)));
     assert!(
         chunk_tasks
@@ -389,7 +390,7 @@ fn every_level_is_built_and_only_once() {
         .find(|t| t.contains("long exchange, given"))
         .unwrap();
     assert!(whole.contains(&format!(
-        "<input>\n#{big} user: read every file\npart #{}-#",
+        "<input>\n{big}|user: read every file\npart #{}-#",
         big + 1
     )));
     assert!(tasks.iter().all(|t| t.ends_with("</input>")));

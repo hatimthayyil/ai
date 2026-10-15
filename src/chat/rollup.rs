@@ -1,11 +1,10 @@
-use std::{borrow::Cow, collections::BTreeMap, ops::Range};
-
-use serde_json::Value;
+use std::{collections::BTreeMap, ops::Range};
 
 use crate::{
     chat::{
-        model::{Exchange, Item, Kind, Marker, Tree, exchanges},
+        model::{Exchange, Item, Kind, Tree, exchanges},
         record::{Key, LineKind},
+        render::{Cut, clip, item_line},
     },
     memory::{NODE, flat, ruler},
 };
@@ -16,60 +15,16 @@ pub const PROMPT: &str = include_str!("prompts/compact.txt");
 pub const INPUT: usize = 48 * 1024;
 /// The most a call reads of one tool call's input or one tool output: its head and tail.
 pub const CLIP: usize = 4 * 1024;
-/// The most a call reads of one message or reply, so no item alone fills a chunk.
-const TEXT: usize = INPUT / 2;
+/// How a call reads an item: a message or reply in at most half the input, so no item alone
+/// fills a chunk; tool inputs and outputs in [`CLIP`].
+const CUT: Cut = Cut {
+    words: INPUT / 2,
+    tool: CLIP,
+};
 
-/// `s` within about `n` bytes: its head and tail around a note of how much was cut.
-pub fn clip(s: &str, n: usize) -> Cow<'_, str> {
-    if s.len() <= n {
-        return Cow::Borrowed(s);
-    }
-    let head = s.floor_char_boundary(n / 2);
-    let tail = s.ceil_char_boundary(s.len() - n / 2);
-    Cow::Owned(format!(
-        "{}\n[{} bytes cut]\n{}",
-        &s[..head],
-        tail - head,
-        &s[tail..]
-    ))
-}
-
-/// A tool call's input: `key=value` per field, strings verbatim, each clipped.
-fn input(v: &Value) -> String {
-    let value = |v: &Value| match v {
-        Value::String(s) => clip(s, CLIP / 2).into_owned(),
-        v => clip(&v.to_string(), CLIP / 2).into_owned(),
-    };
-    match v {
-        Value::Object(m) => m
-            .iter()
-            .map(|(k, v)| format!("{k}={}", value(v)))
-            .collect::<Vec<_>>()
-            .join(" "),
-        Value::Null => String::new(),
-        v => value(v),
-    }
-}
-
-/// Item `seq` as a call reads it: `#seq`, its kind, its content clipped; one entry, ending in a
-/// newline.
+/// Item `seq` as a call reads it: its line, cut by [`CUT`], and a newline.
 pub fn render(seq: u64, item: &Item) -> String {
-    let body = match &item.kind {
-        Kind::User(t) => format!("user: {}", clip(t, TEXT)),
-        Kind::Work { from, text } => format!("work from {from}: {}", clip(text, TEXT)),
-        Kind::Text(t) => format!("ai: {}", clip(t, TEXT)),
-        Kind::ToolCall { name, input: i, .. } => format!("call {name}: {}", clip(&input(i), CLIP)),
-        Kind::ToolResult {
-            output, is_error, ..
-        } => {
-            let what = if *is_error { "error" } else { "result" };
-            format!("{what}: {}", clip(output, CLIP))
-        }
-        Kind::Marker(Marker::Compaction) => "[the harness compacted its context here]".into(),
-        Kind::Marker(Marker::Summary) => "[the harness's summary of what it compacted]".into(),
-        Kind::Marker(Marker::Interrupt) => "[the user interrupted the run]".into(),
-    };
-    format!("#{seq} {body}\n")
+    item_line(seq, item, Some(CUT)) + "\n"
 }
 
 /// Cuts `steps`, consecutive ranges of positions, into chunks of at most `budget` bytes,
@@ -174,9 +129,17 @@ impl Source {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Part {
     pub exchange: Exchange,
-    /// Positions on the path, when the exchange is over [`INPUT`]: every chunk once it is
-    /// closed, else all but the last, which may still grow.
+    /// Positions on the path, when the exchange is over [`INPUT`].
     pub chunks: Vec<Range<usize>>,
+}
+
+impl Part {
+    /// The chunks that no longer change, so have lines: all once the exchange is closed, else
+    /// all but the last, which may still grow.
+    pub fn done(&self) -> &[Range<usize>] {
+        let open = !self.exchange.closed && !self.chunks.is_empty();
+        &self.chunks[..self.chunks.len() - usize::from(open)]
+    }
 }
 
 /// The exchanges of one branch.
@@ -196,8 +159,9 @@ impl Branch {
         }
     }
 
+    /// The chunk lines of `p`: of its [`Part::done`] chunks.
     pub fn chunk_keys(&self, p: &Part) -> Vec<Key> {
-        p.chunks.iter().map(|c| self.key(0, c.end - 1)).collect()
+        p.done().iter().map(|c| self.key(0, c.end - 1)).collect()
     }
 
     /// The exchange line of `p`, once it is closed.
@@ -250,6 +214,39 @@ fn task(what: &str, context: Option<&str>, input: &str) -> String {
     )
 }
 
+/// The exchanges from the root down to `tip` alone, with their chunks.
+pub fn branch(tree: &Tree, tip: usize) -> Branch {
+    let seqs = tree.branch(tip);
+    let mut size = vec![0; tree.items().len()];
+    for &s in &seqs {
+        size[s] = render(s as u64, &tree.items()[s]).len();
+    }
+    cut(tree, seqs, |s| size[s])
+}
+
+/// The exchanges of the path `seqs`, with their chunks; `size` gives an item's rendered bytes by
+/// sequence number.
+fn cut(tree: &Tree, seqs: Vec<usize>, size: impl Fn(usize) -> usize) -> Branch {
+    let path: Vec<&Item> = seqs.iter().map(|&i| &tree.items()[i]).collect();
+    let size = |p: usize| size(seqs[p]);
+    let call = |p: usize| matches!(path[p].kind, Kind::ToolCall { .. });
+    let parts = exchanges(&path)
+        .into_iter()
+        .map(|x| {
+            let over = x.span.clone().map(size).sum::<usize>() > INPUT;
+            let chunks = match over {
+                true => chunk(&x.steps, INPUT, size, call),
+                false => Vec::new(),
+            };
+            Part {
+                exchange: x,
+                chunks,
+            }
+        })
+        .collect();
+    Branch { seqs, parts }
+}
+
 /// The roll-up of a thread's main tree: every line of every branch, with what it is made from.
 pub struct Rollup {
     texts: Vec<String>,
@@ -275,28 +272,7 @@ impl Rollup {
 
     /// The exchanges from the root down to `tip`, with their chunks.
     pub fn branch(&self, tree: &Tree, tip: usize) -> Branch {
-        let seqs = tree.branch(tip);
-        let path: Vec<&Item> = seqs.iter().map(|&i| &tree.items()[i]).collect();
-        let size = |p: usize| self.texts[seqs[p]].len();
-        let call = |p: usize| matches!(path[p].kind, Kind::ToolCall { .. });
-        let parts = exchanges(&path)
-            .into_iter()
-            .map(|x| {
-                let over = x.span.clone().map(size).sum::<usize>() > INPUT;
-                let mut chunks = match over {
-                    true => chunk(&x.steps, INPUT, size, call),
-                    false => Vec::new(),
-                };
-                if !x.closed {
-                    chunks.pop();
-                }
-                Part {
-                    exchange: x,
-                    chunks,
-                }
-            })
-            .collect();
-        Branch { seqs, parts }
+        cut(tree, tree.branch(tip), |s| self.texts[s].len())
     }
 
     fn add(&mut self, tree: &Tree, b: &Branch) {
@@ -306,7 +282,7 @@ impl Rollup {
             let message = matches!(tree.items()[first].kind, Kind::User(_) | Kind::Work { .. })
                 .then_some(first as u64);
             let keys = b.chunk_keys(p);
-            for (c, &k) in p.chunks.iter().zip(&keys) {
+            for (c, &k) in p.done().iter().zip(&keys) {
                 self.lines.entry(k).or_insert_with(|| Source::Chunk {
                     message,
                     items: seqs(c),
@@ -385,7 +361,9 @@ impl Rollup {
         Some(match source {
             Source::Chunk { message, .. } => task(
                 CHUNK,
-                message.map(|m| clip(self.text(m), CLIP)).as_deref(),
+                message
+                    .map(|m| clip(self.text(m), Some(CLIP), m))
+                    .as_deref(),
                 &input,
             ),
             Source::Exchange(_) => task(EXCHANGE, None, &input),
@@ -400,17 +378,6 @@ mod tests {
     use super::*;
     use crate::chat::model::SourceId;
     use jiff::Timestamp;
-    use serde_json::json;
-
-    #[test]
-    fn clips_keep_head_and_tail() {
-        assert_eq!(clip("short", 10), "short");
-        let s = format!("{}{}", "a".repeat(10), "b".repeat(10));
-        assert_eq!(clip(&s, 8), "aaaa\n[12 bytes cut]\nbbbb");
-        let u = "é".repeat(10);
-        let c = clip(&u, 7);
-        assert!(c.starts_with("é\n") && c.ends_with("\né"), "{c}");
-    }
 
     fn item(kind: Kind) -> Item {
         Item {
@@ -427,43 +394,17 @@ mod tests {
     }
 
     #[test]
-    fn items_render_one_entry_each() {
+    fn a_call_reads_items_cut_to_their_share() {
         let r = |k| render(7, &item(k));
-        assert_eq!(r(Kind::User("fix it".into())), "#7 user: fix it\n");
-        assert_eq!(
-            r(Kind::Work {
-                from: "reviewer".into(),
-                text: "done".into()
-            }),
-            "#7 work from reviewer: done\n"
-        );
-        assert_eq!(r(Kind::Text("ok".into())), "#7 ai: ok\n");
-        let call = Kind::ToolCall {
-            id: "t1".into(),
-            name: "Bash".into(),
-            input: json!({"command": "cargo test", "timeout": 60}),
-        };
-        assert_eq!(r(call), "#7 call Bash: command=cargo test timeout=60\n");
-        let out = format!("{}{}", "h".repeat(CLIP), "t".repeat(CLIP));
+        assert_eq!(r(Kind::User("fix it".into())), "7|user: fix it\n");
         let result = r(Kind::ToolResult {
             id: "t1".into(),
-            output: out,
-            is_error: true,
+            output: "o".repeat(3 * CLIP),
+            is_error: false,
         });
-        assert!(result.starts_with(&format!("#7 error: {}\n[", "h".repeat(CLIP / 2))));
-        assert!(result.ends_with(&format!("cut]\n{}\n", "t".repeat(CLIP / 2))));
-        let edit = Kind::ToolCall {
-            id: "t2".into(),
-            name: "Edit".into(),
-            input: json!({"file_path": "/a.rs", "old_string": "x".repeat(CLIP), "new_string": "y"}),
-        };
-        let e = r(edit);
-        assert!(e.starts_with("#7 call Edit: file_path=/a.rs new_string=y old_string=xx"));
-        assert!(e.len() < CLIP, "each field is clipped: {}", e.len());
-        assert_eq!(
-            r(Kind::Marker(Marker::Interrupt)),
-            "#7 [the user interrupted the run]\n"
-        );
+        assert!(result.len() < CLIP + 100 && result.contains("bytes cut: zoom 7"));
+        let reply = r(Kind::Text("t".repeat(INPUT)));
+        assert!(reply.len() < INPUT / 2 + 100 && reply.len() > INPUT / 2);
     }
 
     /// Chunks of `sizes` (one per position), steps cut where `steps` start, calls at `calls`.

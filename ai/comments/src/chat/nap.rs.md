@@ -15,6 +15,7 @@ Runs (`Run`)
 `build(thread, backend, keys, deadline)` (for `ai chat compact`)
 - The keys and the unbuilt lines they are made from; a key the roll-up does not have and that is not built is an error (`<key> is no line of thread <name>.`). Returns at the deadline with what is built; running calls are stopped.
 - Takes no lock: it builds only what the view needs, now. A nap running at the same time may make the same call; the first write wins.
+- Logs to the thread's log like a nap, under a `build` span, so a compaction's failed lines are on record.
 
 `nap(thread, backend)` (for `ai chat nap --thread <name>`)
 - Logs to `Thread::log_path` (`log::init`; INFO `start`, `built` (line, bytes, secs), `end`; WARN `failed`; `busy`).

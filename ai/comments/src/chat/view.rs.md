@@ -3,7 +3,7 @@
 Design: `ai/research/20261014T002322---chat-design.md`, View and Roll-up. Fold: `/hatimthayyil/code/optchat/optchat.md` §3.2 and `20261008T074205---optchat-cache-revision-review.md` (the corrected due rule).
 
 Branch
-- `Branch`: the path from the root to a session's tip (`Tree::branch`, positions are sequence numbers, increasing), its exchanges (`model::exchanges`), and every line of levels 0 to 1 + log2(exchanges), loaded once into a map. A session with no item yet uses its graft as tip.
+- `Branch`: the path from the root to a session's tip, its exchanges and their chunks as the roll-up cuts them (`rollup::branch`), and every line of the thread (`Snapshot::all_lines`), loaded once into a map. A session with no item yet uses its graft as tip.
 - Fold coordinates are memory's `Coord` over exchange positions along the branch: `(l, i)` covers exchanges `[i·2^l, (i+1)·2^l)`, its line is key `(1 + l, last item of its last exchange)`, the contract with the roll-up. The fold covers the closed exchanges, all but the last.
 
 Fold
@@ -16,13 +16,14 @@ Ids
 - An exchange of one item prints as `n`, like the item, and zooming it shows the item, which is all it holds.
 
 Chunks
-- A chunk line's key gives only its last item. Its start is the end of the previous chunk line in the exchange, the first starting at the exchange's first step (after its message). This assumes the roll-up writes an exchange's chunk lines in order; a chunk line written before an earlier one would show a wider range than it covers.
+- An exchange's chunks are the roll-up's own cut (`Part::chunks`, every chunk, the open last one included): the view shows the built chunk lines consecutive from the first, each with its exact range, so the compactor may write them in any order. A chunk line after an unbuilt one is left out until the gap is built. On a path cut at a zoomed id's last item the exchange there is open, but its last chunk still shows if built: a built chunk line names the same range on any path through it (rollup.rs.md).
 
 Sections and budgets
 - `VIEW` 128,000 bytes in all. The instruction, the user rail (`RAIL` 8,000) and the open exchange (`OPEN` 32,000) are rendered first; the fold gets what is left, at least ~86 KB.
 - User rail: the user's messages that open closed exchanges, newest first while they fit, shown oldest first; the newest always, cut to `RAIL`. The open exchange's message is in its own section, so it is not repeated. Work items (other agents) are not the user's words.
 - Open exchange: its message (cut to 8,000), then its chunk lines and the steps after the last of them, the newest that fit in `OPEN`, whole steps; a step too big alone splits into items so the newest item always shows. What is left out is one `(not shown: zoom a-b)` line. On auto compaction the prompt that triggered it is this message (register.ts.md).
-- Item lines: `n|user: …`, `ai:`, `work from <sender>:`, `call <tool>: <input JSON>`, `result:`/`error:`, markers in brackets. In listings, words are cut to 8,000 bytes and tool input or output to 2,000: head and tail around `[... N bytes cut: zoom n ...]`. Zooming an item prints it whole. The roll-up renders items for its prompts too; one renderer should serve both once it lands.
+- Item lines: `render::item_line`, the one renderer the compactor's input uses too (render.rs.md). In listings, words are cut to 8,000 bytes (fold fallbacks: 512) and tool input or output to 2,000. Zooming an item prints it whole.
+- The instruction tells the agent that `#n` in a summary names item n: the compactor's prompt asks each finding to cite the item holding its detail that way.
 
 Zoom
 - One level down: a node into its two halves (with the same fallback as the fold); a whole exchange into its message, chunk lines and items; part of an exchange (a chunk, or a `not shown` span) into the chunk lines strictly inside it and its other items; an item whole. Memory's two-levels-down zoom does not fit here: under a node over two exchanges the next level is chunk lines, which most exchanges lack.

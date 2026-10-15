@@ -14,9 +14,9 @@ use gix::ObjectId;
 use crate::{
     chat::{
         claude,
+        nap::{build, nap},
         record::Binding,
         store::{Chat, Thread, check_name},
-        stub,
         sync::Synced,
         view::{Branch, Id, zoom},
     },
@@ -184,7 +184,7 @@ impl Cli {
             }
             Command::Sync { session } => sync(cwd, session),
             Command::Compact { session } => compact(cwd, out, session),
-            Command::Nap { thread } => stub::nap(cwd, check_name(&thread)?, out),
+            Command::Nap { thread } => nap_cmd(cwd, out, &thread),
         }
     }
 }
@@ -206,12 +206,40 @@ fn attached(cwd: &Path, c: &Current) -> Result<Option<(Thread, Binding)>> {
     }
 }
 
-/// Starts the thread's background compactor, unless `AI_CHAT_NAP=0`.
+/// Starts the thread's background compactor, unless `ai.chat.nap` is false.
 fn start_nap(cwd: &Path, thread: &str) -> Result<()> {
-    match env::var_os("AI_CHAT_NAP").is_none_or(|v| v != "0") {
-        true => stub::spawn_nap(cwd, thread),
-        false => Ok(()),
+    let chat = find(cwd)?;
+    chat.spawn_nap(&chat.thread(thread)?)?;
+    Ok(())
+}
+
+/// The thread's compactor, here: what it built and what failed.
+fn nap_cmd(cwd: &Path, out: &mut dyn Write, name: &str) -> Result<ExitCode> {
+    let chat = find(cwd)?;
+    let t = chat.thread(name)?;
+    let Some(b) = nap(&t, chat.backend()?)? else {
+        writeln!(
+            out,
+            "A compactor is already running; it will build these too."
+        )?;
+        return Ok(ExitCode::SUCCESS);
+    };
+    for (k, e) in &b.failed {
+        writeln!(out, "Failed {k}: {e}")?;
     }
+    match b.lines {
+        0 => writeln!(out, "Nothing built.")?,
+        n => writeln!(
+            out,
+            "Built {}, {} by the model.",
+            plural(n, "line"),
+            b.calls
+        )?,
+    }
+    Ok(match b.failed.is_empty() {
+        true => ExitCode::SUCCESS,
+        false => ExitCode::FAILURE,
+    })
 }
 
 /// A random (version 4) UUID, as Claude Code's session ids.
@@ -368,7 +396,7 @@ fn compact(cwd: &Path, out: &mut dyn Write, s: Session) -> Result<ExitCode> {
     let mut branch = Branch::load(&t.snapshot()?, tip)?;
     let keys = branch.needed(t.name());
     if !keys.is_empty() {
-        stub::build(&t, &keys, Instant::now() + WAIT)?;
+        build(&t, chat.backend()?, &keys, Instant::now() + WAIT)?;
         branch = Branch::load(&t.snapshot()?, tip)?;
     }
     write!(out, "{}", branch.view(t.name()))?;
