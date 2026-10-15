@@ -392,7 +392,8 @@ fn sync(cwd: &Path, s: Session) -> Result<ExitCode> {
     }
 }
 
-/// Sync, the lines the view needs built within [`WAIT`], then the view.
+/// Sync, the lines the view needs built within [`WAIT`], then the view; nothing for a session
+/// whose branch holds no item yet.
 fn compact(cwd: &Path, out: &mut dyn Write, s: Session) -> Result<ExitCode> {
     let (Some(c), Some(chat)) = (s.current(), Chat::find(cwd)?) else {
         return not_attached();
@@ -404,6 +405,9 @@ fn compact(cwd: &Path, out: &mut dyn Write, s: Session) -> Result<ExitCode> {
         return not_attached();
     };
     let tip = b.tip.or(b.graft);
+    if tip.is_none() {
+        return Ok(ExitCode::SUCCESS);
+    }
     let mut branch = Branch::load(&t.snapshot()?, tip)?;
     let keys = branch.needed(t.name());
     if !keys.is_empty() {

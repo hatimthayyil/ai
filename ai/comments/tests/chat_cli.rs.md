@@ -10,5 +10,5 @@ Lines are written through the library (`Thread::put_line`), keyed by `exchange_e
 - Compact of a session whose harness cannot be read: exit 1, the reason on stderr, nothing on stdout.
 - Listing; the view in three parts whose footers chain, joined equal to `compact`'s output, although a line is built between parts.
 - Zoom of a node, a node with an unbuilt half, an exchange, an item, a long item in two parts; bad ids.
-- Launcher: argv, binding with the future transcript path, graft of a second session.
+- Launcher: argv, binding with the future transcript path, graft of a second session. The seed: `compact` of a launched session prints nothing on a new thread, and the view ending at its graft on an existing one.
 - Resume: unknown thread; the newest session resumed and re-attached, with the launcher's args; from another directory and with the transcript gone, a new session with the reason on stderr and the same args.

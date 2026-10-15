@@ -24,6 +24,15 @@ async function session($: EngineInterface): Promise<string[]> {
   return sessionArgs(await $.session.id(), (await $.state.get(transcript)).value)
 }
 
+async function view($: EngineInterface, args: string[], fallback: string): Promise<string | undefined> {
+  const ran = await chat($, ['compact', ...args], LONG_MS)
+  if (ran.exitCode === 0 && ran.stdout !== '') return ran.stdout
+  if (ran.exitCode !== 0 && ran.exitCode !== NOT_ATTACHED) {
+    $.ui.log(`ai chat compact failed; ${fallback}. ${ran.stderr.trim()}`)
+  }
+  return undefined
+}
+
 function reply(ran: Ran): string {
   if (ran.exitCode === 0) return ran.stdout.trim()
   if (ran.exitCode === NOT_ATTACHED) return 'This session is not attached to an ai chat thread.'
@@ -52,15 +61,18 @@ export const register: Register = on => {
 
   on('classic.SessionStart', async ($, e, next) => {
     await $.state.set(transcript, e.transcript_path)
-    return next(e)
+    const started = await next(e)
+    if (e.source !== 'startup') return started
+    const seed = await view($, sessionArgs(e.session_id, e.transcript_path), 'starting without the thread')
+    if (seed === undefined) return started
+    return { ...started, additionalContext: [...(started.additionalContext ?? []), seed] }
   })
 
   on('session.compact', async ($, e, next) => {
     if (e.agentId !== undefined) return next(e)
-    const ran = await chat($, ['compact', ...(await session($))], LONG_MS)
-    if (ran.exitCode === 0) return { messages: [{ role: 'user', text: ran.stdout, toolUses: [] }] }
-    if (ran.exitCode !== NOT_ATTACHED) $.ui.log(`ai chat compact failed; compacting natively. ${ran.stderr.trim()}`)
-    return next(e)
+    const text = await view($, await session($), 'compacting natively')
+    if (text === undefined) return next(e)
+    return { messages: [{ role: 'user', text, toolUses: [] }] }
   })
 
   on('classic.Stop', async ($, e, next) => {

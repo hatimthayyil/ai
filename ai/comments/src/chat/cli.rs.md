@@ -8,7 +8,7 @@ Sessions
 - The transcript is looked up (`claude::transcript`) only by `attach`. `sync` and `compact` pass the given path, else the binding's: `attach` and the launcher record it.
 
 Terminal
-- `claude <name> [-- args]`: a version-4 UUID (getrandom), bound to `name` with its future transcript `<config>/projects/<project_dir(cwd)>/<uuid>.jsonl` (the file does not exist yet, so nothing is ingested; the graft is the thread's newest item), then `exec claude --session-id <uuid> args…`. Seeding a fresh session with the view is the plugin's.
+- `claude <name> [-- args]`: a version-4 UUID (getrandom), bound to `name` with its future transcript `<config>/projects/<project_dir(cwd)>/<uuid>.jsonl` (the file does not exist yet, so nothing is ingested; the graft is the thread's newest item), then `exec claude --session-id <uuid> args…`. The plugin seeds the new session with `compact` when it starts (register.ts.md, Seed).
 - `resume <name> [-- args]`: the thread's newest Claude Code binding, by tip then attach time. Resumed only if its transcript exists in the project directory of the current directory, the only one `claude --resume` searches: re-attached (catching up), then `exec claude --resume <id> args…`. Otherwise one line on stderr says why, and it launches a new session as above, with the same args. The args are the launcher's (model, permission mode, plugin dirs), so a resumed session runs as it was started. No guard against running inside a session: Claude Code refuses a nested launch itself.
 - `resume` with neither name nor session lists the threads: name, harness and UTC minute of the newest item, branch count.
 
@@ -19,5 +19,5 @@ In session
 
 Internal
 - `sync` (and `attach`): no output; when items were added, `Chat::spawn_nap` starts the background compactor, unless the git config `ai.chat.nap` is false (nap.rs.md; the only switch).
-- `compact`: sync, then `nap::build` of the fold's unbuilt lines with the configured model (`Chat::backend`) until `WAIT` (60 s), then the view on stdout, whole (the plugin sends it as one message). Lines that fail stay placeholders (the thread's log has why). An error (no `claude` on `PATH`, a store error) fails the command, so the plugin compacts natively and shows the reason.
+- `compact`: sync, then `nap::build` of the fold's unbuilt lines with the configured model (`Chat::backend`) until `WAIT` (60 s), then the view on stdout, whole (the plugin sends it as one message). Also the seed of a launched session: its tip is its graft, so the view ends where the session starts. A session whose branch has no item (the launcher's, on a new thread) prints nothing: the plugin then seeds nothing, or compacts natively. Lines that fail stay placeholders (the thread's log has why). An error (no `claude` on `PATH`, a store error) fails the command, so the plugin compacts natively and shows the reason.
 - `nap --thread <name>`: `nap::nap` with the configured model. Prints the failed lines, then `Built N lines, M by the model.` or `Nothing built.`, or that another compactor holds the lock; exit 1 if a line failed. Spawned by sync, its stdout is null and its stderr the log.

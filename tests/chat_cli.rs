@@ -488,6 +488,7 @@ fn the_launcher_binds_a_new_session_and_starts_claude() {
     let want = s.project(&s.repo()).join(format!("{id}.jsonl"));
     assert_eq!(b.transcript, Some(want.clone()));
     assert_eq!((b.graft, b.tip), (None, None));
+    ok(s.ai(&["compact", "--session", id]), "");
 
     fs::create_dir_all(want.parent().unwrap()).unwrap();
     fs::write(&want, fixture("plain.jsonl")).unwrap();
@@ -506,6 +507,16 @@ fn the_launcher_binds_a_new_session_and_starts_claude() {
         b.graft,
         Some(3),
         "a new session hangs on the thread's newest item"
+    );
+    let o = s.ai(&["compact", "--session", second]);
+    let seed = stdout(&o);
+    assert_eq!(code(&o), 0, "{}", stderr(&o));
+    assert!(seed.starts_with("# Thread `dev`"), "{seed}");
+    assert!(
+        section(&seed, "The exchange in progress")
+            .last()
+            .is_some_and(|l| l.starts_with("3|")),
+        "a new session's view ends at its graft: {seed}"
     );
 
     let o = s.ai(&["claude", "a b"]);

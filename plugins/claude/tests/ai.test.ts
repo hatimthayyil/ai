@@ -6,6 +6,7 @@ const SESSION = 's1'
 const TRANSCRIPT = '/t/s1.jsonl'
 const VIEW = '<view>KIWI-9</view>\n'
 const NATIVE: SessionMessage[] = [{ role: 'user', text: 'native summary', toolUses: [] }]
+const PROJECT = 'a project hook context'
 const SESSION_ARGS = ['--harness', 'claude', '--session', SESSION]
 const ALL_ARGS = [...SESSION_ARGS, '--transcript', TRANSCRIPT]
 
@@ -25,7 +26,7 @@ function engine(on: On, answer: (args: readonly string[]) => Answer) {
   const compacts: string[] = []
   const logs: string[] = []
   on('session.id', async () => ({ value: SESSION }))
-  on('classic.SessionStart', async () => ({}))
+  on('classic.SessionStart', async () => ({ additionalContext: [PROJECT] }))
   on('classic.Stop', async () => ({}))
   on('process.run', async (_$, e) => {
     calls.push(e.argv)
@@ -47,13 +48,51 @@ function engine(on: On, answer: (args: readonly string[]) => Answer) {
   return { calls, compacts, logs }
 }
 
+function start($: Engine, source: 'startup' | 'resume' | 'clear' = 'startup') {
+  return $.classic.SessionStart({ source, session_id: SESSION, transcript_path: TRANSCRIPT })
+}
+
 test('an attached session compacts into the ai chat view', async ($, on) => {
   const world = engine(on, () => [0, VIEW, ''])
-  await $.classic.SessionStart({ source: 'startup', transcript_path: TRANSCRIPT })
+  await start($, 'resume')
   const result = await $.session.compact({ trigger: 'auto', messages: [] })
   expect(result.messages).toEqual([{ role: 'user', text: VIEW, toolUses: [] }])
   expect(world.compacts).toEqual([])
   expect(world.calls).toEqual([['ai', 'chat', 'compact', ...ALL_ARGS]])
+})
+
+test('a new session of a thread starts with its view', async ($, on) => {
+  const world = engine(on, () => [0, VIEW, ''])
+  const result = await start($)
+  expect(result.additionalContext).toEqual([PROJECT, VIEW])
+  expect(world.calls).toEqual([['ai', 'chat', 'compact', ...ALL_ARGS]])
+})
+
+test('a resumed, cleared, unattached or empty session starts as it would', async ($, on) => {
+  let answer: Answer = [0, VIEW, '']
+  const world = engine(on, () => answer)
+  expect((await start($, 'resume')).additionalContext).toEqual([PROJECT])
+  expect((await start($, 'clear')).additionalContext).toEqual([PROJECT])
+  expect(world.calls).toEqual([])
+  answer = [3, '', '']
+  expect((await start($)).additionalContext).toEqual([PROJECT])
+  answer = [0, '', '']
+  expect((await start($)).additionalContext).toEqual([PROJECT])
+  expect(world.calls.length).toBe(2)
+  expect(world.logs).toEqual([])
+})
+
+test('a failed seed starts without the view and says why', async ($, on) => {
+  const world = engine(on, () => [1, '', 'no claude on PATH\n'])
+  expect((await start($)).additionalContext).toEqual([PROJECT])
+  expect(world.logs).toEqual(['ai chat compact failed; starting without the thread. no claude on PATH'])
+})
+
+test('an attached session with nothing in its thread compacts natively', async ($, on) => {
+  const world = engine(on, () => [0, '', ''])
+  const result = await $.session.compact({ trigger: 'manual', messages: [] })
+  expect(result.messages).toEqual(NATIVE)
+  expect(world.compacts).toEqual(['manual'])
 })
 
 test('an unattached session compacts natively', async ($, on) => {
@@ -82,13 +121,14 @@ test('a subagent compacts natively without ai chat', async ($, on) => {
 
 test('/ai attach and detach run ai chat with the session', async ($, on) => {
   const world = engine(on, args => (args[0] === 'attach' ? [0, 'Attached to dev.\n', ''] : [3, '', '']))
-  await $.classic.SessionStart({ source: 'startup', transcript_path: TRANSCRIPT })
+  await start($)
   expect((await ai($, 'attach dev')).text).toBe('Attached to dev.')
   expect((await ai($, ' detach ')).text).toBe(
     'This session is not attached to an ai chat thread.',
   )
   expect((await ai($, 'attach')).text).toMatch(/^Usage/)
   expect(world.calls).toEqual([
+    ['ai', 'chat', 'compact', ...ALL_ARGS],
     ['ai', 'chat', 'attach', 'dev', ...ALL_ARGS],
     ['ai', 'chat', 'detach', ...ALL_ARGS],
   ])
