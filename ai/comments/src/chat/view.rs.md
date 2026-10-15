@@ -28,3 +28,7 @@ Zoom (`Branch::zoom`)
 - A node opens two levels down, as `ai memory zoom` does: four lines of `n/4` turns; `t+2` its two turn lines (below a turn line are its items, not lines). A turn opens into its message, chunk lines and items; items `t.i+n` into the chunk lines strictly inside them and their other items; one item prints whole. A line not built shows what is built under it, as in the fold.
 - Any range zooms: `5+3` is no node, so it prints the fewest aligned nodes that tile it (`tile`: `5`, `6+2`).
 - Listings print messages and replies whole, each tool call on one line cut to 400 bytes, and tool output as its size only; `--tool-output` prints calls and output whole. Normal use never pulls raw output into the context by accident; it stays one flag away.
+
+Grep (`Branch::grep`)
+- Searches the session's branch: message and reply words, tool calls (`key=value` input), tool output only with `--tool-output`, and every line built over the branch (chunk lines, turn lines of closed turns, nodes). Markers never. One line per match, `id|kind: excerpt` or `id|excerpt`, memory's 400-byte window around the match (`memory::excerpt`).
+- Matches sort by their last position, then by span, so an item comes before the lines that end with it, as `ai memory grep` orders by last member then size. `--before <id>` keeps what sorts before that id's span: the CLI prints the newest matches that fit one part and names the oldest shown as the next page's `--before`.

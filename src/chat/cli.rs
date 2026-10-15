@@ -22,7 +22,7 @@ use crate::{
         view::Branch,
     },
     file,
-    memory::{broken_pipe, page, plural},
+    memory::{Pattern, broken_pipe, page, plural, quote, word},
 };
 
 /// The exit code of plumbing for a session attached to no thread; it prints nothing.
@@ -97,6 +97,21 @@ enum Command {
         part: Option<u64>,
         #[arg(long, help = "show tool output")]
         tool_output: bool,
+    },
+    #[command(about = "search a thread: messages, replies, tool calls and summary lines.")]
+    Grep {
+        #[command(flatten)]
+        target: Target,
+        #[command(flatten)]
+        pat: Pattern,
+        #[arg(long, help = "also search tool output")]
+        tool_output: bool,
+        #[arg(
+            long,
+            value_name = "ID",
+            help = "only matches before this id: the next page"
+        )]
+        before: Option<String>,
     },
     #[command(about = "write a thread's summary lines that are ready.")]
     Summarise {
@@ -228,6 +243,12 @@ impl Cli {
                 part,
                 tool_output,
             } => zoom(cwd, out, target, &id, part.unwrap_or(1), tool_output),
+            Command::Grep {
+                target,
+                pat,
+                tool_output,
+                before,
+            } => grep(cwd, out, target, &pat, tool_output, before.as_deref()),
             Command::Summarise {
                 target,
                 rebuild,
@@ -604,6 +625,67 @@ fn zoom(
             part + 1
         )?;
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The matches of `pat` on the picked thread's branch (the session's, else the newest), oldest
+/// first: the newest that fit in [`PART`] bytes, then how to get the older ones.
+fn grep(
+    cwd: &Path,
+    out: &mut dyn Write,
+    target: Target,
+    pat: &Pattern,
+    tool_output: bool,
+    before: Option<&str>,
+) -> Result<ExitCode> {
+    let (_, t, session) = pick(cwd, target)?;
+    let re = pat.regex()?;
+    let before = match before {
+        Some(v) => {
+            Some(Id::parse(v).with_context(|| format!("'{v}' is not an id. Copy it as printed."))?)
+        }
+        None => None,
+    };
+    let snap = t.snapshot()?;
+    let branch = Branch::load(&snap, branch_tip(&snap, session.as_ref())?)?;
+    let Some(hits) = branch.grep(&re, tool_output, before) else {
+        bail!(
+            "This branch has no {}.",
+            before.expect("only a bad --before")
+        );
+    };
+    if hits.is_empty() {
+        writeln!(out, "No match.")?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    let mut from = hits.len();
+    let mut size = 0;
+    while from > 0 && (from == hits.len() || size + hits[from - 1].line.len() < PART as usize) {
+        from -= 1;
+        size += hits[from].line.len() + 1;
+    }
+    for h in &hits[from..] {
+        writeln!(out, "{}", h.line)?;
+    }
+    if from == 0 {
+        writeln!(out, "{}.", plural(hits.len() as u64, "match"))?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    let a = pat.args();
+    let mut cmd = format!("ai chat grep -t {} {}", t.name(), quote(&a[0]));
+    for v in &a[1..] {
+        cmd += &format!(" {}", word(v));
+    }
+    if tool_output {
+        cmd += " --tool-output";
+    }
+    writeln!(
+        out,
+        "Newest {} of {}. Older: {cmd} --before {}",
+        hits.len() - from,
+        hits.len(),
+        hits[from].id
+    )?;
     Ok(ExitCode::SUCCESS)
 }
 

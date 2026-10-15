@@ -56,6 +56,7 @@
 - `roll-up`: a thread's lines and what each is made from (`chat::Rollup`), over every branch: chunk lines (level 0), turn lines of closed turns (1), binary nodes over aligned pairs of closed turns along the branch (1+k). Built by the chat compactor.
 - `chunk`: consecutive steps of a turn whose rendering is over `INPUT` (48 KB), cut greedily at step boundaries (an over-budget step before its tool calls); final once another chunk follows it. Its call reads the turn's message as context.
 - `free line` (chat): a line whose input fits 512 B is that input without item ids, flattened, with no model call.
+- `grep` (chat): `ai chat grep <regex>`: matches on a thread's branch in items' words and tool calls, tool output with `--tool-output`, and built lines; newest page first, older with `--before <id>`.
 - `summarise` (chat): `ai chat summarise -t <name>`: the thread's summariser, one per thread (its lock), building every ready line until none is; `sync-session` starts it in the background unless `ai.chat.summarise` is false. `--rebuild` drops every line and writes them again; `--dry-run` prints what it would write and stores nothing; `--model` picks the model for the run.
 - `porcelain`: a command for users and agents (git's term): listed in help, errors worded as what to do.
 - `plumbing`: a command for harness glue, at least two words, hidden from help: `ai chat sync-session`, `ai chat compact-session`, `ai memory prompt-hook`.

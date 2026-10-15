@@ -33,27 +33,16 @@ impl Cut {
 /// Item `id` as `id|kind: text`, cut by `cut`; its text continues on lines indented by two
 /// spaces. A tool call's input is `key=value` per field, strings verbatim.
 pub fn item_line(id: Id, item: &Item, cut: Cut) -> String {
-    let (label, text) = match &item.kind {
-        Kind::User(t) => ("user".to_string(), clip(t, cut.words)),
-        Kind::Work { from, text } => (format!("agent {from}"), clip(text, cut.words)),
-        Kind::Text(t) => ("ai".into(), clip(t, cut.words)),
-        Kind::ToolCall { name, input, .. } => {
-            let input = match cut.input {
-                WHOLE => args(input),
-                max => clip(&flat(&args(input)), max),
-            };
-            (format!("tool {name}"), input)
-        }
-        Kind::ToolResult {
-            output, is_error, ..
-        } => {
-            let label = if *is_error { "error" } else { "output" };
-            let text = match cut.output {
-                Some(max) => clip(output, max),
-                None => size(output),
-            };
-            (label.into(), text)
-        }
+    let text = match &item.kind {
+        Kind::User(t) | Kind::Text(t) | Kind::Work { text: t, .. } => clip(t, cut.words),
+        Kind::ToolCall { input, .. } => match cut.input {
+            WHOLE => args(input),
+            max => clip(&flat(&args(input)), max),
+        },
+        Kind::ToolResult { output, .. } => match cut.output {
+            Some(max) => clip(output, max),
+            None => size(output),
+        },
         Kind::Marker(m) => {
             let what = match m {
                 Marker::Compaction => "the harness compacted its context here",
@@ -64,7 +53,32 @@ pub fn item_line(id: Id, item: &Item, cut: Cut) -> String {
         }
     };
     let text: Vec<&str> = text.trim_end().lines().collect();
-    format!("{id}|{label}: {}", text.join("\n  "))
+    format!("{id}|{}: {}", label(&item.kind), text.join("\n  "))
+}
+
+/// An item's kind and whole text, as grep searches it: a tool output only with `output`, a
+/// marker never.
+pub fn searched(item: &Item, output: bool) -> Option<(String, String)> {
+    let text = match &item.kind {
+        Kind::User(t) | Kind::Text(t) | Kind::Work { text: t, .. } => t.clone(),
+        Kind::ToolCall { input, .. } => args(input),
+        Kind::ToolResult { output: o, .. } if output => o.clone(),
+        Kind::ToolResult { .. } | Kind::Marker(_) => return None,
+    };
+    Some((label(&item.kind), text))
+}
+
+/// An item's kind as printed before its text.
+fn label(kind: &Kind) -> String {
+    match kind {
+        Kind::User(_) => "user".into(),
+        Kind::Work { from, .. } => format!("agent {from}"),
+        Kind::Text(_) => "ai".into(),
+        Kind::ToolCall { name, .. } => format!("tool {name}"),
+        Kind::ToolResult { is_error: true, .. } => "error".into(),
+        Kind::ToolResult { .. } => "output".into(),
+        Kind::Marker(_) => "marker".into(),
+    }
 }
 
 /// A tool output's size, in place of its text.

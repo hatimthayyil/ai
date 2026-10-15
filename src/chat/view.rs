@@ -1,17 +1,18 @@
 use std::{collections::HashMap, ops::Range};
 
 use anyhow::Result;
+use regex::Regex;
 
 use crate::{
     chat::{
         id::Id,
         model::{Item, Kind, Tree, Turn},
         record::Key,
-        render::{Cut, WHOLE, item_line},
+        render::{Cut, WHOLE, item_line, searched},
         rollup,
         store::Snapshot,
     },
-    memory::{Coord, flat},
+    memory::{Coord, excerpt, flat},
 };
 
 /// The most a view prints, in bytes.
@@ -46,8 +47,9 @@ An item's text continues on lines indented by two spaces. A summary cites the it
 a detail in brackets, as [12.3].
 
 To see what a line was made from, zoom it: `ai chat zoom 8+4`. Any turn, item or range of them \
-zooms. A zoom lists tool calls without their output; add `--tool-output` to see it. Long output \
-comes in parts: run the command each part ends with.
+zooms. A zoom lists tool calls without their output; add `--tool-output` to see it. \
+`ai chat grep <regex>` searches the thread the same way. Long output comes in parts: run the \
+command each part ends with.
 
 Summaries keep little tool output: say in your replies what you learned that will matter later.
 ";
@@ -85,6 +87,19 @@ fn under(c: Coord, d: u32) -> Vec<Coord> {
     (c.i << d..(c.i + 1) << d)
         .map(|i| Coord::new(l, i))
         .collect()
+}
+
+/// A match of `Branch::grep`: where it ends on the path, then how many positions it spans.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Hit {
+    pub id: Id,
+    pub order: (usize, usize),
+    pub line: String,
+}
+
+/// The order of a match over positions `r`: by its last position, then by its size.
+fn order(r: &Range<usize>) -> (usize, usize) {
+    (r.end - 1, r.len())
 }
 
 /// The fewest aligned nodes that tile turns `first` to `end - 1`, in order.
@@ -172,19 +187,13 @@ impl Branch {
                 output: None,
             },
         };
+        let r = self.positions(id)?;
         let lines = match id {
             Id::Turns { first, n } => {
-                let end = first.checked_add(n)?;
-                if end > self.xs.len() as u64 {
-                    return None;
-                }
-                let nodes = match Coord::at(first, n, end) {
-                    Some(c) if c.l == 0 => {
-                        let span = self.xs[first as usize].span.clone();
-                        return Some(self.inside(span, listing).join("\n"));
-                    }
+                let nodes = match Coord::at(first, n, first + n) {
+                    Some(c) if c.l == 0 => return Some(self.inside(r, listing).join("\n")),
                     Some(c) => under(c, c.l.min(2)),
-                    None => tile(first, end),
+                    None => tile(first, first + n),
                 };
                 let mut out = Vec::new();
                 for c in nodes {
@@ -192,26 +201,84 @@ impl Branch {
                 }
                 out
             }
+            Id::Items { n: 1, .. } => vec![self.item_line(
+                r.start,
+                Cut {
+                    output: tool_output.then_some(WHOLE),
+                    ..Cut::WHOLE
+                },
+            )],
+            Id::Items { .. } => self.inside(r, listing),
+        };
+        Some(lines.join("\n"))
+    }
+
+    /// The matches of `re` on this branch, oldest first: the words of messages and replies,
+    /// tool calls, tool output only with `tool_output`, and the lines built over the branch.
+    /// `before` keeps those that end before it, or are smaller and end with it.
+    pub fn grep(&self, re: &Regex, tool_output: bool, before: Option<Id>) -> Option<Vec<Hit>> {
+        let below = match before {
+            Some(id) => order(&self.positions(id)?),
+            None => (usize::MAX, 0),
+        };
+        let mut hits = Vec::new();
+        for p in 0..self.path.len() {
+            if let Some((label, text)) = searched(self.item(p), tool_output)
+                && re.is_match(&text)
+            {
+                let id = self.items_id(&(p..p + 1));
+                let line = format!("{id}|{label}: {}", excerpt(&text, Some(re)));
+                hits.push((id, p..p + 1, line));
+            }
+        }
+        let mut lines: Vec<(Id, Range<usize>, &str)> = Vec::new();
+        for e in 0..self.xs.len() {
+            for (r, t) in self.chunks(e) {
+                lines.push((self.items_id(&r), r, t));
+            }
+        }
+        let closed = self.closed();
+        for l in 0..u64::BITS - closed.leading_zeros() {
+            for i in 0..closed >> l {
+                let c = Coord::new(l, i);
+                if let Some(t) = self.text(c) {
+                    lines.push((Id::node(c), self.span(c), t));
+                }
+            }
+        }
+        for (id, r, t) in lines {
+            if re.is_match(t) {
+                hits.push((id, r, format!("{id}|{}", excerpt(t, Some(re)))));
+            }
+        }
+        let mut hits: Vec<Hit> = hits
+            .into_iter()
+            .map(|(id, r, line)| Hit {
+                id,
+                order: order(&r),
+                line,
+            })
+            .filter(|h| h.order < below)
+            .collect();
+        hits.sort_by_key(|h| h.order);
+        Some(hits)
+    }
+
+    /// The positions on the path `id` names; `None` if it is not on this branch.
+    fn positions(&self, id: Id) -> Option<Range<usize>> {
+        match id {
+            Id::Turns { first, n } => {
+                let end = first.checked_add(n)?;
+                (end <= self.xs.len() as u64)
+                    .then(|| self.xs[first as usize].span.start..self.xs[end as usize - 1].span.end)
+            }
             Id::Items { turn, first, n } => {
                 let x = self.xs.get(turn as usize)?;
                 let a = x.span.start.checked_add(first as usize)?;
                 let b = a.checked_add(n as usize)?;
-                if b > x.span.end {
-                    return None;
-                }
-                match n {
-                    1 => vec![self.item_line(
-                        a,
-                        Cut {
-                            output: tool_output.then_some(WHOLE),
-                            ..Cut::WHOLE
-                        },
-                    )],
-                    _ => self.inside(a..b, listing),
-                }
+                (b <= x.span.end).then_some(a..b)
             }
-        };
-        Some(lines.join("\n"))
+        }
     }
 
     fn frame(&self, thread: &str) -> (String, String, String) {
@@ -858,5 +925,53 @@ mod tests {
             "0+2|a\n2+2|b\n4+2|c\n6+2|d",
             "two levels down"
         );
+    }
+
+    #[test]
+    fn grep_finds_words_calls_and_lines_and_output_on_request() {
+        let text = |i: usize| {
+            [
+                "find the needle",
+                "looking",
+                "grep needle",
+                "needle found here",
+                "done",
+                "thanks",
+                "ok",
+                "more needle",
+                "x",
+            ][i]
+                .to_string()
+        };
+        let b = branch(
+            chain("utcrtutut", text),
+            &[(1, 4, "user asked for the needle"), (2, 6, "needle twice")],
+        );
+        let re = Regex::new("needle").unwrap();
+        let grep = |out: bool, before: Option<&str>| -> Vec<String> {
+            let before = before.map(|b| Id::parse(b).unwrap());
+            b.grep(&re, out, before)
+                .unwrap()
+                .into_iter()
+                .map(|h| h.line)
+                .collect()
+        };
+        assert_eq!(
+            grep(false, None),
+            [
+                "0.0|user: find the needle",
+                "0.2|tool Bash: grep needle",
+                "0|user asked for the needle",
+                "0+2|needle twice",
+                "2.0|user: more needle",
+            ]
+        );
+        assert!(grep(true, None).contains(&"0.3|output: needle found here".to_string()));
+        assert_eq!(
+            grep(false, Some("0")),
+            ["0.0|user: find the needle", "0.2|tool Bash: grep needle"],
+            "before turn 0's line: what ends before it"
+        );
+        assert_eq!(b.grep(&re, false, Some(Id::parse("9").unwrap())), None);
     }
 }

@@ -120,11 +120,13 @@ fn key(c: Coord) -> Key {
     (c.end() - 1, c.n())
 }
 
-fn quote(s: &str) -> String {
+/// `s` in single quotes, for a shell.
+pub fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-fn word(s: &str) -> String {
+/// `s` as one shell word: bare if it needs no quotes.
+pub fn word(s: &str) -> String {
     let safe = |c: char| c.is_ascii_alphanumeric() || "._/:@+=,-".contains(c);
     match !s.is_empty() && s.chars().all(safe) {
         true => s.into(),

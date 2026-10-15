@@ -295,7 +295,12 @@ fn porcelain_without_a_thread_says_what_to_do() {
     let s = Sandbox::new();
     let attach = "This session is not attached to a thread. Attach it with `ai chat attach <name>`, or name a thread with -t.\n";
     let name = "Name a thread with -t: this is not a harness session. List them: ai chat list\n";
-    for cmd in [&["view"][..], &["zoom", "0"], &["summarise"]] {
+    for cmd in [
+        &["view"][..],
+        &["zoom", "0"],
+        &["grep", "x"],
+        &["summarise"],
+    ] {
         fails(s.ai_in("s-1", cmd), attach);
         fails(s.ai(cmd), name);
     }
@@ -621,6 +626,63 @@ fn zoom_opens_lines_and_items() {
     ] {
         fails(s.ai_in("s-1", &["zoom", id]), err);
     }
+}
+
+#[test]
+fn grep_pages_the_newest_matches_first() {
+    let s = Sandbox::new();
+    s.transcript(
+        "s-1",
+        &talk(300, |k| format!("question {k} {}", "w".repeat(100))),
+    );
+    ok(
+        s.ai_in("s-1", &["attach", "dev"]),
+        "Attached to dev, a new thread.\n",
+    );
+    ok(
+        s.ai_in("s-1", &["grep", "reply 7$"]),
+        "7.1|ai: reply 7\n1 match.\n",
+    );
+    ok(
+        s.ai(&["grep", "-t", "dev", "reply 7$"]),
+        "7.1|ai: reply 7\n1 match.\n",
+    );
+    ok(s.ai_in("s-1", &["grep", "nothing"]), "No match.\n");
+    let mut seen = Vec::new();
+    let mut args = vec!["grep".to_string(), "Question".into(), "-i".into()];
+    loop {
+        let out = stdout(&s.ai_in("s-1", &args.iter().map(String::as_str).collect::<Vec<_>>()));
+        let (body, footer) = out.trim_end().rsplit_once('\n').unwrap();
+        let page: Vec<&str> = body.lines().collect();
+        assert!(body.len() < 20_000);
+        seen.splice(
+            0..0,
+            page.iter()
+                .map(|l| l.split('|').next().unwrap().to_string()),
+        );
+        match footer.split_once(" Older: ai chat ") {
+            Some((_, next)) => {
+                assert!(
+                    next.starts_with("grep -t dev 'Question' -i --before "),
+                    "{next}"
+                );
+                args = next
+                    .split(' ')
+                    .map(|a| a.trim_matches('\'').to_string())
+                    .collect();
+            }
+            None => {
+                assert_eq!(footer, format!("{} matches.", page.len()));
+                break;
+            }
+        }
+    }
+    let want: Vec<String> = (0..300).map(|k| format!("{k}.0")).collect();
+    assert_eq!(seen, want, "every match once, oldest first");
+    fails(
+        s.ai_in("s-1", &["grep", "x", "--before", "9.9"]),
+        "This branch has no 9.9.\n",
+    );
 }
 
 #[test]

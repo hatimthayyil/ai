@@ -27,7 +27,7 @@ pub use compact::{
 };
 pub use config::{Config, Knob};
 pub use cover::cover;
-pub use grep::{Pattern, excerpt};
+pub use grep::{Pattern, excerpt, quote, word};
 pub use hook::{LONG_PROMPT, REMIND_EVERY, REMINDER};
 pub use meta::{Field, Meta};
 pub use record::{Kind, Message, Node, Place, Who, flat, now};

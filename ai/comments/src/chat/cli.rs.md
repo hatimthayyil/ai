@@ -3,12 +3,12 @@
 Design: `ai/research/20261014T002322---chat-design.md`, Commands and Contract. Caller: `plugins/claude/hooks/register.ts` (register.ts.md).
 
 Porcelain and plumbing
-- Porcelain (`start`, `resume`, `list`, `view`, `attach`, `detach`, `zoom`, `summarise`) is for users and agents: a failure is a sentence on stderr that says what to do, exit 1.
+- Porcelain (`start`, `resume`, `list`, `view`, `attach`, `detach`, `zoom`, `grep`, `summarise`) is for users and agents: a failure is a sentence on stderr that says what to do, exit 1.
 - Plumbing (`sync-session`, `compact-session`) is for harness glue: two-word names, hidden from help (`hide = true`). Not attached (no session, no repository, no attached binding): exit `NOT_ATTACHED` (3) and print nothing, so the plugin tells "not attached" from a failure without parsing text.
 
 Sessions and threads
 - Commands that read a session take `--harness` (default `claude`), `--session`, `--transcript`. Flags win: processes the plugin starts do not have `CLAUDE_CODE_SESSION_ID`. Without `--session`, the harness's environment names it (`claude::session_id`).
-- `pick` is the one thread selection for `view`, `zoom` and `summarise`: `-t <name>`, else the thread the session is attached to. It returns the session's binding only when the session is attached to the picked thread, so `view` shows the session's branch there and the thread's newest branch elsewhere.
+- `pick` is the one thread selection for `view`, `zoom`, `grep` and `summarise`: `-t <name>`, else the thread the session is attached to. It returns the session's binding only when the session is attached to the picked thread, so `view` shows the session's branch there and the thread's newest branch elsewhere.
 - Every command resolves names in the repository containing the current directory (`Chat::find`, gix discover): two repositories each have their own `develop`.
 - The transcript is looked up (`claude::transcript`) only by `attach`. Plumbing passes the given path, else the binding's: `attach` and `start` record it.
 
@@ -21,6 +21,7 @@ Reading
 - `fresh_view` is the one way a view is made fresh, for `view` and `compact-session`: read the branch a tip function picks, build the lines its fold needs (`summarise::build`, within `WAIT`, waiting first for a running summariser), read again, render; with the commit read. `view` syncs first when the calling session is attached to the thread it shows (the plumbing's sync, without starting a summariser: the lines it needs it writes itself); outside a session it writes the lines without a sync. The model is the configured one.
 - `view`: the picked thread's view, paged by `PART` (20,000 bytes, under the 30,000-character cap on a Claude Code command's output) with memory's `page`. Every part comes from one commit of the thread: the footer names it and the thread (`-t <name> --part <n> --at <commit>`), because the background summariser writes lines between parts and a fresh fold would shift the page boundaries. A thread with no item yet prints that it holds nothing.
 - `zoom <id> [part] [--tool-output]`: `Branch::zoom` on the picked thread's branch (the session's when it is attached there, else the newest: `branch_tip`), paged by part number, not pinned: what it shows is mostly items, which never change. The footer names the thread and repeats `--tool-output`, so it works outside the session too.
+- `grep <regex> [-F -i -s] [--tool-output] [--before <id>]`: `Branch::grep` on the picked thread's branch, as zoom picks it, with memory's pattern flags (`memory::Pattern`). Pages newest first: the newest matches that fit `PART`, printed oldest first, then `Newest k of n. Older: ai chat grep -t <name> '<pattern>' … --before <id>` with the flags repeated (`memory::quote`, `memory::word`); else `n matches.`.
 - `attach`/`detach`: one-line confirmations. `attach` reports a new thread and the thread it moved from.
 
 Summarising
