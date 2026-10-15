@@ -300,45 +300,35 @@ fn pick(cwd: &Path, t: Target) -> Result<(Chat, Thread, Option<Current>)> {
     }
 }
 
-/// The end of `c`'s branch in `s`: its newest item, else its graft.
-fn session_tip(s: &Snapshot, c: &Current) -> Result<Option<u64>> {
-    Ok(s.binding(&c.harness, &c.session)?
-        .and_then(|b| b.tip.or(b.graft)))
-}
-
-/// The end of the branch a command reads in `s`: session `c`'s, else the thread's newest.
-fn branch_tip(s: &Snapshot, c: Option<&Current>) -> Result<Option<u64>> {
+/// The branch a command reads in `s`: session `c`'s (to its newest item, else its graft), else
+/// the thread's newest; `None` while it holds no item.
+fn read_branch(s: &Snapshot, c: Option<&Current>) -> Result<Option<Branch>> {
     match c {
-        Some(c) => session_tip(s, c),
-        None => Ok(s.tips()?.last().copied()),
+        Some(c) => match s.binding(&c.harness, &c.session)? {
+            Some(b) if b.tip.or(b.graft).is_some() => Ok(Some(Branch::session(s, &b)?)),
+            _ => Ok(None),
+        },
+        None => match s.tips()?.last() {
+            Some(&tip) => Ok(Some(Branch::load(s, Some(tip))?)),
+            None => Ok(None),
+        },
     }
 }
 
-/// The view of the branch `tip` picks in snapshot `s`; `None` while that branch holds no item.
-fn view_in(
-    t: &Thread,
-    s: &Snapshot,
-    tip: impl Fn(&Snapshot) -> Result<Option<u64>>,
-) -> Result<Option<String>> {
-    match tip(s)? {
-        Some(tip) => Ok(Some(Branch::load(s, Some(tip))?.view(t.name()))),
-        None => Ok(None),
-    }
+/// The view of the branch `c` reads in snapshot `s`; `None` while that branch holds no item.
+fn view_in(t: &Thread, s: &Snapshot, c: Option<&Current>) -> Result<Option<String>> {
+    Ok(read_branch(s, c)?.map(|b| b.view(t.name())))
 }
 
-/// The view of the branch `tip` picks in the thread's latest snapshot, once the lines it needs
+/// The view of the branch `c` reads in the thread's latest snapshot, once the lines it needs
 /// are written: built within [`WAIT`], waiting first for a running summariser. With the commit
 /// it was read from; `None` while that branch holds no item.
-fn fresh_view(
-    chat: &Chat,
-    t: &Thread,
-    tip: impl Fn(&Snapshot) -> Result<Option<u64>>,
-) -> Result<Option<(String, ObjectId)>> {
+fn fresh_view(chat: &Chat, t: &Thread, c: Option<&Current>) -> Result<Option<(String, ObjectId)>> {
     let snap = t.snapshot()?;
-    let Some(end) = tip(&snap)? else {
+    let Some(branch) = read_branch(&snap, c)? else {
         return Ok(None);
     };
-    let keys = Branch::load(&snap, Some(end))?.needed(t.name());
+    let keys = branch.needed();
     let snap = match keys.is_empty() {
         true => snap,
         false => {
@@ -347,7 +337,7 @@ fn fresh_view(
         }
     };
     let commit = snap.commit().context("A thread with items has a commit.")?;
-    Ok(view_in(t, &snap, tip)?.map(|v| (v, commit)))
+    Ok(view_in(t, &snap, c)?.map(|v| (v, commit)))
 }
 
 /// Starts the thread's background summariser, unless `ai.chat.summarise` is false.
@@ -543,7 +533,7 @@ fn compact_session(cwd: &Path, out: &mut dyn Write, s: Session) -> Result<ExitCo
     let Some((t, _)) = chat.attached(&c.harness, &c.session)? else {
         return not_attached();
     };
-    if let Some((view, _)) = fresh_view(&chat, &t, |s| session_tip(s, &c))? {
+    if let Some((view, _)) = fresh_view(&chat, &t, Some(&c))? {
         write!(out, "{view}")?;
     }
     Ok(ExitCode::SUCCESS)
@@ -560,19 +550,18 @@ fn view(
     at: Option<&str>,
 ) -> Result<ExitCode> {
     let (chat, t, session) = pick(cwd, target)?;
-    let tip = |s: &Snapshot| branch_tip(s, session.as_ref());
     let shown = match at {
         Some(at) => {
             let id = ObjectId::from_hex(at.as_bytes())
                 .ok()
                 .with_context(|| format!("'{at}' is not a commit id. Copy it as printed."))?;
-            view_in(&t, &t.snapshot_at(id)?, tip)?.map(|v| (v, id))
+            view_in(&t, &t.snapshot_at(id)?, session.as_ref())?.map(|v| (v, id))
         }
         None => {
             if let Some(c) = &session {
                 chat.sync(&c.harness, &c.session, c.transcript.as_deref())?;
             }
-            fresh_view(&chat, &t, tip)?
+            fresh_view(&chat, &t, session.as_ref())?
         }
     };
     let Some((text, commit)) = shown else {
@@ -610,8 +599,8 @@ fn zoom(
         );
     };
     let snap = t.snapshot()?;
-    let branch = Branch::load(&snap, branch_tip(&snap, session.as_ref())?)?;
-    let Some(text) = branch.zoom(parsed, tool_output) else {
+    let branch = read_branch(&snap, session.as_ref())?;
+    let Some(text) = branch.and_then(|b| b.zoom(parsed, tool_output)) else {
         bail!("This branch has no {parsed}.");
     };
     let (text, n) = page(&text, PART, part)?;
@@ -647,8 +636,11 @@ fn grep(
         None => None,
     };
     let snap = t.snapshot()?;
-    let branch = Branch::load(&snap, branch_tip(&snap, session.as_ref())?)?;
-    let Some(hits) = branch.grep(&re, tool_output, before) else {
+    let hits = match read_branch(&snap, session.as_ref())? {
+        Some(b) => b.grep(&re, tool_output, before),
+        None => before.is_none().then(Vec::new),
+    };
+    let Some(hits) = hits else {
         bail!(
             "This branch has no {}.",
             before.expect("only a bad --before")

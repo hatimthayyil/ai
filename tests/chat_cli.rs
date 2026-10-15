@@ -5,7 +5,7 @@ use std::{
 };
 
 use ai_tools::{
-    chat::{Chat, Key, LineKind, NOT_ATTACHED, Tree, VIEW, claude, turns},
+    chat::{Chat, FOLD_LINES, Key, LineKind, NOT_ATTACHED, Tree, claude, turns},
     memory::Who,
 };
 use serde_json::{Value, json};
@@ -431,7 +431,7 @@ fn compact_session_syncs_and_prints_the_view() {
     );
     let open = section(&view, "The turn in progress");
     assert!(open[0].starts_with("3.0|user: "));
-    assert!(view.len() <= VIEW);
+    assert!(section(&view, "Earlier turns, summarized").len() <= FOLD_LINES);
 }
 
 #[test]
@@ -484,15 +484,25 @@ fn list_shows_this_repositorys_threads_and_their_sessions() {
 #[test]
 fn view_prints_a_thread_in_parts_from_one_commit() {
     let s = Sandbox::new();
-    s.transcript("s-2", &talk(100, |k| format!("question {k}")));
+    let ask = |k| {
+        format!(
+            "question {k} {}",
+            "q".repeat(if k == 99 { 4_000 } else { 200 })
+        )
+    };
+    s.transcript("s-2", &talk(100, ask));
     ok(
         s.ai_in("s-2", &["attach", "long-one"]),
         "Attached to long-one, a new thread.\n",
     );
     let ends = turn_ends(&s, "long-one");
     let text = |k: usize| format!("{k} {}", "w".repeat(500));
-    for (k, &end) in ends.iter().enumerate().filter(|e| e.0 != 60) {
+    for (k, &end) in ends.iter().enumerate() {
         s.line("long-one", 1, end, &text(k));
+    }
+    // 99 closed turns fold to 64 lines: the 35 oldest pairs as nodes.
+    for i in (0..35).filter(|&i| i != 30) {
+        s.line("long-one", 2, ends[2 * i + 1], &text(i));
     }
     let o = s.ai(&["compact-session", "--session", "s-2"]);
     let view = stdout(&o);
@@ -511,7 +521,7 @@ fn view_prints_a_thread_in_parts_from_one_commit() {
     let next = footer.strip_prefix("Part 1 of 3. Next: ai chat ").unwrap();
     assert!(next.starts_with("view -t long-one --part 2 --at "));
     let mut parts = body.to_string() + "\n";
-    s.line("long-one", 1, ends[60], &text(60));
+    s.line("long-one", 2, ends[61], &text(30));
     let args: Vec<&str> = next.split(' ').collect();
     let second = stdout(&s.ai(&args));
     let (body, footer) = second.trim_end().rsplit_once('\n').unwrap();
@@ -732,11 +742,12 @@ fn start_binds_a_new_session_and_starts_claude() {
     assert_eq!(code(&o), 0, "{}", stderr(&o));
     assert!(seed.starts_with("# Thread `dev`"), "{seed}");
     assert!(
-        section(&seed, "The turn in progress")
+        section(&seed, "The previous session's last turn")
             .last()
             .is_some_and(|l| l.starts_with("1.1|")),
         "a new session's view ends at its graft: {seed}"
     );
+    assert!(section(&seed, "The turn in progress").is_empty());
 
     let o = s.ai(&["start", "a b"]);
     assert_eq!(code(&o), 1);

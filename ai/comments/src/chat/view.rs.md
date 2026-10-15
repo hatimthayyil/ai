@@ -8,8 +8,8 @@ Branch
 
 Fold
 - Computed fresh at every call: start from one line per closed turn, merge the most due aligned pair, due = (T − last)/2^l with `last` the pair's last turn, oldest first on ties, until the lines fit. No high/low-water batches and no persisted view: the view is sent once per compaction, so its prefix never has to stay stable from one call to the next; only the merge order matters.
-- `plan` reckons an unbuilt line at `LINE` (512) bytes plus its id: the fold the view wants if everything were built. `needed` is its unbuilt lines; `compact` asks the roll-up to build them before rendering.
-- `render`: each planned line if built; else what is built under it (a node's halves, recursively; a turn's message cut to `LINE`, its chunk lines, a placeholder for the rest); else one placeholder naming its id. Fallbacks can outgrow the plan, so while over budget the oldest multi-line fallbacks collapse back to one placeholder each. A placeholder is shorter than the plan's `LINE` estimate, so the collapsed fold always fits.
+- `plan`: the fold of the closed turns into at most `FOLD_LINES` (64) lines, as `ai memory wake` caps its view by lines: the fold the view wants if everything were built. `needed` is its unbuilt lines; `compact` asks the roll-up to build them before rendering. 64 lines of at most 512 bytes is about 33 KB, 8,000 tokens.
+- `render`: each planned line if built; else what is built under it (a node's halves, recursively; a turn's message cut to `LINE`, its chunk lines, a placeholder for the rest); else one placeholder naming its id. Fallbacks can outgrow the plan, so while over `FOLD_LINES` the oldest multi-line fallbacks collapse back to one placeholder each. A full fold has no room for fallbacks: they show only while the thread has fewer closed turns than lines.
 
 Ids
 - Lines and items print by id (id.rs.md): a node `t+n` from its fold coordinate, a turn line `t`, a chunk or `not shown` span `t.i+n` from the place of its first item, an item `t.i`. Ids are read on the session's branch, so zoom loads the session's branch, not the branch to an item.
@@ -18,7 +18,7 @@ Chunks
 - A turn's chunks are the roll-up's own cut (`Part::chunks`, every chunk, the open last one included): the view shows the built chunk lines consecutive from the first, each with its exact range, so the compactor may write them in any order. A chunk line after an unbuilt one is left out until the gap is built.
 
 Sections and budgets
-- `VIEW` 128,000 bytes in all. The instruction, the user rail (`RAIL` 8,000) and the open turn (`OPEN` 32,000) are rendered first; the fold gets what is left, at least ~86 KB.
+- The fold at most `FOLD_LINES` lines, the user rail at most `RAIL` (8,000 bytes), the open turn at most `OPEN` (16,000): about 56 KB, 14,000 tokens, at worst. A seeded session (`Branch::session` with no tip of its own) heads the open turn "The previous session's last turn": it ends the graft's session, and the seeded model took "in progress" for its own request.
 - User rail: the user's messages that open closed turns, newest first while they fit, shown oldest first; the newest always, cut to `RAIL`. The open turn's message is in its own section, so it is not repeated. Work items (other agents) are not the user's words.
 - Open turn: its message (cut to 8,000), then its chunk lines and the steps after the last of them, the newest that fit in `OPEN`, whole steps; a step too big alone splits into items so the newest item always shows. What is left out is one `t.i+n|(not shown)` line. On auto compaction the prompt that triggered it is this message (register.ts.md).
 - Item lines: `render::item_line`, the one renderer the compactor's input uses too (render.rs.md). Fold fallbacks cut words to 512 bytes; the open turn to 8,000, tool input and output to 2,000: it is the agent's working context when an auto compaction lands mid-task, so recent output stays.

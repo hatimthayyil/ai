@@ -44,12 +44,12 @@
 - `tip` (of a session): the item of its transcript's newest entry, the end of its branch.
 - `line` (chat): a summary in a thread, keyed by its level and the last item it covers (`level@last`), of kind chunk, turn or node; written once.
 - `sync` (chat): ingest an attached session's new entries into its thread in one commit, none if nothing is new; an unattached session is reported as such.
-- `view` (chat): what `ai chat compact-session` and `ai chat view` print for a session, at most `VIEW` = 128,000 bytes: an instruction, the fold, the user rail, the open turn. Computed fresh each time; nothing about it is stored.
-- `fold` (chat): the closed turns of a session's branch in lines, oldest coarsest: from one line per turn, the most due aligned pair merges first, due = (T − last)/2^l, until the lines fit. An unbuilt line shows what is built under it, else a placeholder.
+- `view` (chat): what `ai chat compact-session` and `ai chat view` print for a session: an instruction, the fold (at most `FOLD_LINES` = 64 lines), the user rail, the open turn; about 56 KB at worst. Computed fresh each time; nothing about it is stored.
+- `fold` (chat): the closed turns of a session's branch in lines, oldest coarsest: from one line per turn, the most due aligned pair merges first, due = (T − last)/2^l, until at most 64 lines are left. An unbuilt line shows what is built under it, else a placeholder.
 - `id` (chat): how a line or item prints, on a branch: `12` turn 12, `8+4` turns 8 to 11 (a node when aligned), `12.3` item 3 of turn 12 (item 0 opens it), `12.3+7` items 3 to 9 of turn 12 (a chunk line). Turns count from 0 along the branch; past a fork, the same id names a different turn on each branch. What `ai chat zoom` takes. Store keys stay `level@last`.
 - `place` (chat): an item's turn and number in it, from its branch (`model::Place`); fixed by the path from the root, so the same on every branch through the item.
 - `user rail`: the newest user messages of closed turns, word for word, about 8 KB, after the fold.
-- `open turn`: a branch's last turn, not yet closed; the view shows its message, chunk lines and newest steps raw (`OPEN` = 32,000 bytes).
+- `open turn`: a branch's last turn, not yet closed; the view shows its message, chunk lines and newest steps raw (`OPEN` = 16,000 bytes). In a seeded session it is the previous session's last turn, headed so.
 - `placeholder` (chat): `8+4|(not summarized yet)`, a line the roll-up has not built; `12.3+7|(not shown)`, the steps of the open turn left out for room.
 - `launcher`: `ai chat start <name> [-- args]`: a new session id bound to the thread with its future transcript, then `exec claude --session-id`.
 - `seed` (chat): the view a launched session of an existing thread starts with, its only context: the plugin's `SessionStart` (`startup`) context, from `ai chat compact-session`. Kept in the transcript, so a resume replays it; a compaction replaces it.
