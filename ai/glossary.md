@@ -44,3 +44,10 @@
 - `tip` (of a session): the item of its transcript's newest entry, the end of its branch.
 - `line` (chat): a summary in a thread, keyed by its level and the last item it covers (`level@last`), of kind chunk, exchange or node; written once.
 - `sync` (chat): ingest an attached session's new entries into its thread in one commit, none if nothing is new; an unattached session is reported as such.
+- `view` (chat): what `ai chat compact` and in-session `ai chat resume` print for a session, at most `VIEW` = 128,000 bytes: an instruction, the fold, the user rail, the open exchange. Computed fresh each time; nothing about it is stored.
+- `fold` (chat): the closed exchanges of a session's branch in lines, oldest coarsest: from one line per exchange, the most due aligned pair merges first, due = (T − last)/2^l, until the lines fit. An unbuilt line shows what is built under it, else a placeholder.
+- `line id` (chat): `a-b`, the items a to b along the branch to b; `n`, item n. What `ai chat zoom` takes.
+- `user rail`: the newest user messages of closed exchanges, word for word, about 8 KB, after the fold.
+- `open exchange`: a branch's last exchange, not yet closed; the view shows its message, chunk lines and newest steps raw (`OPEN` = 32,000 bytes).
+- `placeholder` (chat): `a-b|(not summarized yet: zoom a-b)`, a line the roll-up has not built; `(not shown: zoom a-b)`, the steps of the open exchange left out for room.
+- `launcher`: `ai chat claude <name> [-- args]`: a new session id bound to the thread with its future transcript, then `exec claude --session-id`.
