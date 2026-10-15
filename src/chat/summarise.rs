@@ -250,10 +250,9 @@ pub fn dry_run(thread: &Thread, backend: Arc<dyn Backend>, rebuild: bool) -> Res
     let snap = thread.snapshot()?;
     let roll = Rollup::new(&snap.tree()?);
     let old = snap.all_lines()?;
-    let lines = run
-        .dry
-        .take()
-        .unwrap_or_default()
+    let mut built = run.dry.take().unwrap_or_default();
+    built.sort_by_key(|(k, _)| order(*k));
+    let lines = built
         .into_iter()
         .map(|(key, text)| DryLine {
             first: first(&roll, key),

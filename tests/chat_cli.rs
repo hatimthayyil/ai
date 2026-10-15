@@ -526,6 +526,39 @@ fn view_prints_a_thread_in_parts_from_one_commit() {
 }
 
 #[test]
+fn view_syncs_its_session_and_writes_the_lines_it_needs() {
+    let s = Sandbox::new();
+    s.transcript("s-1", &talk(2, |k| format!("question {k}")));
+    ok(
+        s.ai_in("s-1", &["attach", "dev"]),
+        "Attached to dev, a new thread.\n",
+    );
+    let lines = |s: &Sandbox| {
+        let t = s.chat().thread("dev").unwrap();
+        t.snapshot().unwrap().all_lines().unwrap().len()
+    };
+    assert_eq!(lines(&s), 0);
+    s.transcript("s-1", &talk(4, |k| format!("question {k}")));
+
+    let outside = stdout(&s.ai(&["view", "-t", "dev"]));
+    assert!(
+        section(&outside, "The exchange in progress")[0].ends_with("|user: question 1"),
+        "outside the session, nothing is synced: {outside}"
+    );
+    assert_eq!(lines(&s), 1, "the closed exchange's line is written");
+    assert!(section(&outside, "Earlier exchanges, summarized")[0].starts_with("0-1|0|user: "));
+
+    let inside = stdout(&s.ai_in("s-1", &["view"]));
+    assert!(
+        section(&inside, "The exchange in progress")[0].ends_with("|user: question 3"),
+        "the session's view syncs it first: {inside}"
+    );
+    assert_eq!(lines(&s), 3);
+    assert_eq!(section(&inside, "Earlier exchanges, summarized").len(), 3);
+    assert!(!inside.contains("not summarized yet"), "{inside}");
+}
+
+#[test]
 fn zoom_opens_lines_and_items() {
     let s = Sandbox::new();
     let mut text = talk(4, |k| format!("question {k}"));

@@ -15,7 +15,7 @@ use crate::{
     chat::{
         claude,
         record::Binding,
-        store::{Chat, Thread, check_name},
+        store::{Chat, Snapshot, Thread, check_name},
         summarise::{build, dry_run, rebuild, summarise},
         sync::Synced,
         view::{Branch, Id, zoom},
@@ -245,13 +245,13 @@ fn find(cwd: &Path) -> Result<Chat> {
     Chat::find(cwd)?.context("Not in a git repository: ai chat keeps its threads in one.")
 }
 
-/// The thread `-t` names, else the one the session is attached to; with the session's binding
-/// when the session is attached to it.
-fn pick(cwd: &Path, t: Target) -> Result<(Chat, Thread, Option<Binding>)> {
+/// The thread `-t` names, else the one the session is attached to; with the session when it is
+/// attached to that thread.
+fn pick(cwd: &Path, t: Target) -> Result<(Chat, Thread, Option<Current>)> {
     let chat = find(cwd)?;
     let current = t.session.current();
     let attached = match &current {
-        Some(c) => chat.attached(&c.harness, &c.session)?,
+        Some(c) => chat.attached(&c.harness, &c.session)?.map(|(a, _)| a),
         None => None,
     };
     match t.thread {
@@ -260,19 +260,61 @@ fn pick(cwd: &Path, t: Target) -> Result<(Chat, Thread, Option<Binding>)> {
             if !thread.exists()? {
                 bail!("No thread {name} in this repository. List them: ai chat list");
             }
-            let binding = attached.filter(|(a, _)| a.name() == name).map(|(_, b)| b);
-            Ok((chat, thread, binding))
+            let current = current.filter(|_| attached.is_some_and(|a| a.name() == name));
+            Ok((chat, thread, current))
         }
-        None => match (attached, current) {
-            (Some((thread, b)), _) => Ok((chat, thread, Some(b))),
-            (None, Some(_)) => bail!(
+        None => match attached {
+            Some(thread) => Ok((chat, thread, current)),
+            None if current.is_some() => bail!(
                 "This session is not attached to a thread. Attach it with `ai chat attach <name>`, or name a thread with -t."
             ),
-            (None, None) => bail!(
+            None => bail!(
                 "Name a thread with -t: this is not a harness session. List them: ai chat list"
             ),
         },
     }
+}
+
+/// The end of `c`'s branch in `s`: its newest item, else its graft.
+fn session_tip(s: &Snapshot, c: &Current) -> Result<Option<u64>> {
+    Ok(s.binding(&c.harness, &c.session)?
+        .and_then(|b| b.tip.or(b.graft)))
+}
+
+/// The view of the branch `tip` picks in snapshot `s`; `None` while that branch holds no item.
+fn view_in(
+    t: &Thread,
+    s: &Snapshot,
+    tip: impl Fn(&Snapshot) -> Result<Option<u64>>,
+) -> Result<Option<String>> {
+    match tip(s)? {
+        Some(tip) => Ok(Some(Branch::load(s, Some(tip))?.view(t.name()))),
+        None => Ok(None),
+    }
+}
+
+/// The view of the branch `tip` picks in the thread's latest snapshot, once the lines it needs
+/// are written: built within [`WAIT`], waiting first for a running summariser. With the commit
+/// it was read from; `None` while that branch holds no item.
+fn fresh_view(
+    chat: &Chat,
+    t: &Thread,
+    tip: impl Fn(&Snapshot) -> Result<Option<u64>>,
+) -> Result<Option<(String, ObjectId)>> {
+    let snap = t.snapshot()?;
+    let Some(end) = tip(&snap)? else {
+        return Ok(None);
+    };
+    let keys = Branch::load(&snap, Some(end))?.needed(t.name());
+    let snap = match keys.is_empty() {
+        true => snap,
+        false => {
+            build(t, chat.backend(None)?, &keys, Instant::now() + WAIT)?;
+            t.snapshot()?
+        }
+    };
+    let commit = snap.commit().context("A thread with items has a commit.")?;
+    Ok(view_in(t, &snap, tip)?.map(|v| (v, commit)))
 }
 
 /// Starts the thread's background summariser, unless `ai.chat.summarise` is false.
@@ -465,25 +507,18 @@ fn compact_session(cwd: &Path, out: &mut dyn Write, s: Session) -> Result<ExitCo
     if chat.sync(&c.harness, &c.session, c.transcript.as_deref())? == Synced::NotAttached {
         return not_attached();
     }
-    let Some((t, b)) = chat.attached(&c.harness, &c.session)? else {
+    let Some((t, _)) = chat.attached(&c.harness, &c.session)? else {
         return not_attached();
     };
-    let tip = b.tip.or(b.graft);
-    if tip.is_none() {
-        return Ok(ExitCode::SUCCESS);
+    if let Some((view, _)) = fresh_view(&chat, &t, |s| session_tip(s, &c))? {
+        write!(out, "{view}")?;
     }
-    let mut branch = Branch::load(&t.snapshot()?, tip)?;
-    let keys = branch.needed(t.name());
-    if !keys.is_empty() {
-        build(&t, chat.backend(None)?, &keys, Instant::now() + WAIT)?;
-        branch = Branch::load(&t.snapshot()?, tip)?;
-    }
-    write!(out, "{}", branch.view(t.name()))?;
     Ok(ExitCode::SUCCESS)
 }
 
 /// The thread's view, in parts from one commit of it: of the session's branch when the
-/// session is attached to it, else of its newest branch.
+/// session is attached to it (synced first), else of its newest branch. The first part writes
+/// the lines the view needs, as `compact-session` does; `--at` reads the commit it names.
 fn view(
     cwd: &Path,
     out: &mut dyn Write,
@@ -491,29 +526,29 @@ fn view(
     part: u64,
     at: Option<&str>,
 ) -> Result<ExitCode> {
-    let (_, t, binding) = pick(cwd, target)?;
-    let snap = match at {
+    let (chat, t, session) = pick(cwd, target)?;
+    let tip = |s: &Snapshot| match &session {
+        Some(c) => session_tip(s, c),
+        None => Ok(s.tips()?.last().copied()),
+    };
+    let shown = match at {
         Some(at) => {
             let id = ObjectId::from_hex(at.as_bytes())
                 .ok()
                 .with_context(|| format!("'{at}' is not a commit id. Copy it as printed."))?;
-            t.snapshot_at(id)?
+            view_in(&t, &t.snapshot_at(id)?, tip)?.map(|v| (v, id))
         }
-        None => t.snapshot()?,
+        None => {
+            if let Some(c) = &session {
+                chat.sync(&c.harness, &c.session, c.transcript.as_deref())?;
+            }
+            fresh_view(&chat, &t, tip)?
+        }
     };
-    let session = match &binding {
-        Some(b) => snap.binding(&b.harness, &b.session)?,
-        None => None,
-    };
-    let tip = match session {
-        Some(b) => b.tip.or(b.graft),
-        None => snap.tips()?.last().copied(),
-    };
-    let (Some(commit), Some(_)) = (snap.as_ref().commit(), tip) else {
+    let Some((text, commit)) = shown else {
         writeln!(out, "Thread {} holds nothing yet.", t.name())?;
         return Ok(ExitCode::SUCCESS);
     };
-    let text = Branch::load(&snap, tip)?.view(t.name());
     let (text, n) = page(&text, PART, part)?;
     writeln!(out, "{}", text.strip_suffix('\n').unwrap_or(text))?;
     if part < n {
