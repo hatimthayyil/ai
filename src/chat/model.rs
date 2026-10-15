@@ -118,7 +118,7 @@ impl Tree {
 /// A message (from the user or another agent) and the steps that answer it, up to the next
 /// message on the path.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Exchange {
+pub struct Turn {
     /// Positions on the path. It starts with the message, unless the path does not.
     pub span: Range<usize>,
     /// The rest of the span, cut before each assistant text.
@@ -127,8 +127,8 @@ pub struct Exchange {
     pub closed: bool,
 }
 
-/// The exchanges along `path`, in order.
-pub fn exchanges(path: &[&Item]) -> Vec<Exchange> {
+/// The turns along `path`, in order.
+pub fn turns(path: &[&Item]) -> Vec<Turn> {
     let user = |i: usize| matches!(path[i].kind, Kind::User(_) | Kind::Work { .. });
     let mut starts: Vec<usize> = (0..path.len()).filter(|&i| user(i)).collect();
     if !path.is_empty() && !user(0) {
@@ -147,7 +147,7 @@ pub fn exchanges(path: &[&Item]) -> Vec<Exchange> {
                     _ => steps.push(i..i + 1),
                 }
             }
-            Exchange {
+            Turn {
                 span: start..end,
                 steps,
                 closed: end < path.len(),
@@ -225,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn exchanges_and_steps() {
+    fn turns_and_steps() {
         let all = items(&[
             ("t0", "", 't'),
             ("u1", "", 'u'),
@@ -246,13 +246,13 @@ mod tests {
             ("w1", "", 'w'),
         ]);
         let path: Vec<&Item> = all.iter().collect();
-        let x = |span: Range<usize>, steps: &[(usize, usize)], closed: bool| Exchange {
+        let x = |span: Range<usize>, steps: &[(usize, usize)], closed: bool| Turn {
             span,
             steps: steps.iter().map(|&(a, b)| a..b).collect(),
             closed,
         };
         assert_eq!(
-            exchanges(&path),
+            turns(&path),
             [
                 x(0..1, &[(0, 1)], true),
                 x(1..12, &[(2, 7), (7, 10), (10, 12)], true),
@@ -260,7 +260,7 @@ mod tests {
                 x(16..17, &[], false),
             ]
         );
-        assert_eq!(exchanges(&path[1..7]), [x(0..6, &[(1, 6)], false)]);
-        assert_eq!(exchanges(&[]), []);
+        assert_eq!(turns(&path[1..7]), [x(0..6, &[(1, 6)], false)]);
+        assert_eq!(turns(&[]), []);
     }
 }

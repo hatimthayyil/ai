@@ -421,7 +421,7 @@ fn text(content: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chat::model::{Tree, exchanges};
+    use crate::chat::model::{Tree, turns};
 
     const SESSION: &str = "s-1";
 
@@ -454,14 +454,14 @@ mod tests {
             .collect()
     }
 
-    /// Per exchange on the newest branch: its first item, then the entries of each step.
+    /// Per turn on the newest branch: its first item, then the entries of each step.
     fn steps(items: Vec<Item>) -> Vec<Vec<Vec<String>>> {
         let tree = Tree::new(items);
         let path = tree.path(*tree.tips().last().unwrap());
         let entries = |r: std::ops::Range<usize>| -> Vec<String> {
             path[r].iter().map(|i| i.id.entry.clone()).collect()
         };
-        exchanges(&path)
+        turns(&path)
             .iter()
             .map(|x| {
                 let first = x.span.start..x.span.start + 1;
@@ -474,7 +474,7 @@ mod tests {
     }
 
     #[test]
-    fn a_plain_exchange_keeps_only_words() {
+    fn a_plain_turn_keeps_only_words() {
         let items = load("plain.jsonl");
         assert_eq!(
             shape(&items),
@@ -589,7 +589,7 @@ mod tests {
     }
 
     #[test]
-    fn a_mid_run_message_opens_an_exchange() {
+    fn a_mid_run_message_opens_a_turn() {
         let items = load("interject.jsonl");
         assert_eq!(
             shape(&items),
@@ -676,7 +676,7 @@ mod tests {
         assert_eq!(
             shape(&items)[3..],
             ["a2<-r1 text", "w1<-a2 work", "a3<-w1 text"],
-            "a hand-back opens an exchange; a task notification is dropped"
+            "a hand-back opens a turn; a task notification is dropped"
         );
         assert_eq!(
             items[4].kind,

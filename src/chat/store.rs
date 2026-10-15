@@ -13,7 +13,7 @@ use jiff::Timestamp;
 use crate::{
     chat::{
         claude::Subagent,
-        model::{Item, Kind, SourceId, Tree, exchanges},
+        model::{Item, Kind, SourceId, Tree, turns},
         record::{
             Agent, Binding, COLUMNS, Head, Key, Line, LineKind, check_id, encode_kind, item, word,
         },
@@ -127,8 +127,8 @@ pub struct ThreadInfo {
     /// Its newest item: its harness, session and time.
     pub newest: Option<Head>,
     pub tips: Vec<u64>,
-    /// The exchanges on its newest branch.
-    pub exchanges: usize,
+    /// The turns on its newest branch.
+    pub turns: usize,
     /// Its sessions, each with the time of its newest item (else of its attaching), newest
     /// first.
     pub sessions: Vec<(Binding, Timestamp)>,
@@ -181,7 +181,7 @@ impl Chat {
         names.iter().map(|n| self.thread(n)).collect()
     }
 
-    /// Every thread with its newest item, tips, exchanges and sessions.
+    /// Every thread with its newest item, tips, turns and sessions.
     pub fn list(&self) -> Result<Vec<ThreadInfo>> {
         self.threads()?
             .iter()
@@ -189,8 +189,8 @@ impl Chat {
                 let snap = t.snapshot()?;
                 let heads = snap.heads()?;
                 let tips = tips(&heads);
-                let exchanges = match tips.last() {
-                    Some(&tip) => exchanges(&snap.tree()?.path(tip as usize)).len(),
+                let turns = match tips.last() {
+                    Some(&tip) => turns(&snap.tree()?.path(tip as usize)).len(),
                     None => 0,
                 };
                 let mut sessions: Vec<(Binding, Timestamp)> = snap
@@ -206,7 +206,7 @@ impl Chat {
                     name: t.name.clone(),
                     tips,
                     newest: heads.into_iter().last(),
-                    exchanges,
+                    turns,
                     sessions,
                 })
             })

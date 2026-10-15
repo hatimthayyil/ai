@@ -405,7 +405,7 @@ fn resume(cwd: &Path, name: &str, args: &[String]) -> Result<ExitCode> {
     launch(cwd, name, args)
 }
 
-/// Every thread: its exchanges, newest activity and branches; under it, its sessions.
+/// Every thread: its turns, newest activity and branches; under it, its sessions.
 fn list(cwd: &Path, out: &mut dyn Write, s: Session) -> Result<ExitCode> {
     let threads = find(cwd)?.list()?;
     if threads.is_empty() {
@@ -427,7 +427,7 @@ fn list(cwd: &Path, out: &mut dyn Write, s: Session) -> Result<ExitCode> {
             out,
             "{}  {}  {last}{branches}",
             t.name,
-            plural(t.exchanges as u64, "turn")
+            plural(t.turns as u64, "turn")
         )?;
         let wh = t.sessions.iter().map(|(b, _)| b.harness.len()).max();
         let ws = t.sessions.iter().map(|(b, _)| b.session.len()).max();

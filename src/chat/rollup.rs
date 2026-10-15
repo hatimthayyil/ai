@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, ops::Range};
 
 use crate::{
     chat::{
-        model::{Exchange, Item, Kind, Tree, exchanges},
+        model::{Item, Kind, Tree, Turn, turns},
         record::{Key, LineKind},
         render::{Cut, clip, item_line},
     },
@@ -11,7 +11,7 @@ use crate::{
 
 /// The system prompt of every roll-up call.
 pub const PROMPT: &str = include_str!("prompts/compact.txt");
-/// The most one call reads of an exchange, in bytes; a longer exchange is cut into chunks.
+/// The most one call reads of a turn, in bytes; a longer turn is cut into chunks.
 pub const INPUT: usize = 48 * 1024;
 /// The most a call reads of one tool call's input or one tool output: its head and tail.
 pub const CLIP: usize = 4 * 1024;
@@ -90,14 +90,14 @@ impl Pack {
 /// What a line is made from. Items are sequence numbers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
-    /// Consecutive items of an exchange over [`INPUT`], read with the message it answers.
+    /// Consecutive items of a turn over [`INPUT`], read with the message it answers.
     Chunk {
         message: Option<u64>,
         items: Vec<u64>,
     },
-    /// A whole exchange.
-    Exchange(Vec<u64>),
-    /// An exchange over [`INPUT`]: its message, then its chunk lines.
+    /// A whole turn.
+    Turn(Vec<u64>),
+    /// A turn over [`INPUT`]: its message, then its chunk lines.
     Chunked {
         message: Option<u64>,
         chunks: Vec<Key>,
@@ -110,7 +110,7 @@ impl Source {
     pub fn kind(&self) -> LineKind {
         match self {
             Source::Chunk { .. } => LineKind::Chunk,
-            Source::Exchange(_) | Source::Chunked { .. } => LineKind::Exchange,
+            Source::Turn(_) | Source::Chunked { .. } => LineKind::Turn,
             Source::Node(_) => LineKind::Node,
         }
     }
@@ -120,29 +120,29 @@ impl Source {
         match self {
             Source::Chunked { chunks, .. } => chunks,
             Source::Node(pair) => pair,
-            Source::Chunk { .. } | Source::Exchange(_) => &[],
+            Source::Chunk { .. } | Source::Turn(_) => &[],
         }
     }
 }
 
-/// One exchange of a branch, with its chunks.
+/// One turn of a branch, with its chunks.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Part {
-    pub exchange: Exchange,
-    /// Positions on the path, when the exchange is over [`INPUT`].
+    pub turn: Turn,
+    /// Positions on the path, when the turn is over [`INPUT`].
     pub chunks: Vec<Range<usize>>,
 }
 
 impl Part {
-    /// The chunks that no longer change, so have lines: all once the exchange is closed, else
+    /// The chunks that no longer change, so have lines: all once the turn is closed, else
     /// all but the last, which may still grow.
     pub fn done(&self) -> &[Range<usize>] {
-        let open = !self.exchange.closed && !self.chunks.is_empty();
+        let open = !self.turn.closed && !self.chunks.is_empty();
         &self.chunks[..self.chunks.len() - usize::from(open)]
     }
 }
 
-/// The exchanges of one branch.
+/// The turns of one branch.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Branch {
     /// The sequence number of each position on the path, root first.
@@ -164,13 +164,13 @@ impl Branch {
         p.done().iter().map(|c| self.key(0, c.end - 1)).collect()
     }
 
-    /// The exchange line of `p`, once it is closed.
+    /// The turn line of `p`, once it is closed.
     pub fn line(&self, p: &Part) -> Option<Key> {
-        let x = &p.exchange;
+        let x = &p.turn;
         x.closed.then(|| self.key(1, x.span.end - 1))
     }
 
-    /// The exchange lines of the closed exchanges, in order.
+    /// The turn lines of the closed turns, in order.
     pub fn lines(&self) -> Vec<Key> {
         self.parts.iter().filter_map(|p| self.line(p)).collect()
     }
@@ -199,10 +199,10 @@ pub fn nodes(lines: &[Key]) -> Vec<(Key, [Key; 2])> {
     out
 }
 
-const EXCHANGE: &str = "Compress this exchange";
-const CHUNK: &str = "Compress this part of a long exchange";
+const TURN: &str = "Compress this turn";
+const CHUNK: &str = "Compress this part of a long turn";
 const CHUNKED: &str =
-    "Compress this long exchange, given as its message and the lines of its parts in order,";
+    "Compress this long turn, given as its message and the lines of its parts in order,";
 const MERGE: &str = "Merge these two adjacent lines, the earlier first,";
 
 /// A call's message: the size of a line, what to do, the context and the input.
@@ -214,7 +214,7 @@ fn task(what: &str, context: Option<&str>, input: &str) -> String {
     )
 }
 
-/// The exchanges from the root down to `tip` alone, with their chunks.
+/// The turns from the root down to `tip` alone, with their chunks.
 pub fn branch(tree: &Tree, tip: usize) -> Branch {
     let seqs = tree.branch(tip);
     let mut size = vec![0; tree.items().len()];
@@ -224,13 +224,13 @@ pub fn branch(tree: &Tree, tip: usize) -> Branch {
     cut(tree, seqs, |s| size[s])
 }
 
-/// The exchanges of the path `seqs`, with their chunks; `size` gives an item's rendered bytes by
+/// The turns of the path `seqs`, with their chunks; `size` gives an item's rendered bytes by
 /// sequence number.
 fn cut(tree: &Tree, seqs: Vec<usize>, size: impl Fn(usize) -> usize) -> Branch {
     let path: Vec<&Item> = seqs.iter().map(|&i| &tree.items()[i]).collect();
     let size = |p: usize| size(seqs[p]);
     let call = |p: usize| matches!(path[p].kind, Kind::ToolCall { .. });
-    let parts = exchanges(&path)
+    let parts = turns(&path)
         .into_iter()
         .map(|x| {
             let over = x.span.clone().map(size).sum::<usize>() > INPUT;
@@ -238,10 +238,7 @@ fn cut(tree: &Tree, seqs: Vec<usize>, size: impl Fn(usize) -> usize) -> Branch {
                 true => chunk(&x.steps, INPUT, size, call),
                 false => Vec::new(),
             };
-            Part {
-                exchange: x,
-                chunks,
-            }
+            Part { turn: x, chunks }
         })
         .collect();
     Branch { seqs, parts }
@@ -270,7 +267,7 @@ impl Rollup {
         r
     }
 
-    /// The exchanges from the root down to `tip`, with their chunks.
+    /// The turns from the root down to `tip`, with their chunks.
     pub fn branch(&self, tree: &Tree, tip: usize) -> Branch {
         cut(tree, tree.branch(tip), |s| self.texts[s].len())
     }
@@ -278,7 +275,7 @@ impl Rollup {
     fn add(&mut self, tree: &Tree, b: &Branch) {
         let seqs = |r: &Range<usize>| r.clone().map(|p| b.seqs[p] as u64).collect::<Vec<_>>();
         for p in &b.parts {
-            let first = b.seqs[p.exchange.span.start];
+            let first = b.seqs[p.turn.span.start];
             let message = matches!(tree.items()[first].kind, Kind::User(_) | Kind::Work { .. })
                 .then_some(first as u64);
             let keys = b.chunk_keys(p);
@@ -292,7 +289,7 @@ impl Rollup {
                 self.lines
                     .entry(k)
                     .or_insert_with(|| match keys.is_empty() {
-                        true => Source::Exchange(seqs(&p.exchange.span)),
+                        true => Source::Turn(seqs(&p.turn.span)),
                         false => Source::Chunked {
                             message,
                             chunks: keys.clone(),
@@ -323,7 +320,7 @@ impl Rollup {
     /// from is `built`.
     fn input<'a>(&self, key: Key, built: impl Fn(Key) -> Option<&'a str>) -> Option<String> {
         Some(match self.lines.get(&key)? {
-            Source::Chunk { items, .. } | Source::Exchange(items) => {
+            Source::Chunk { items, .. } | Source::Turn(items) => {
                 items.iter().map(|&s| self.text(s)).collect()
             }
             Source::Chunked { message, chunks } => {
@@ -344,7 +341,7 @@ impl Rollup {
     /// The text of line `key` when what it is made from fits a line, so it needs no call;
     /// `None` when it needs one, or until every line it is made from is `built`.
     pub fn free<'a>(&self, key: Key, built: impl Fn(Key) -> Option<&'a str>) -> Option<String> {
-        if let Source::Chunk { items, .. } | Source::Exchange(items) = self.lines.get(&key)?
+        if let Source::Chunk { items, .. } | Source::Turn(items) = self.lines.get(&key)?
             && items.iter().map(|&s| self.text(s).len()).sum::<usize>() > NODE
         {
             return None;
@@ -366,7 +363,7 @@ impl Rollup {
                     .as_deref(),
                 &input,
             ),
-            Source::Exchange(_) => task(EXCHANGE, None, &input),
+            Source::Turn(_) => task(TURN, None, &input),
             Source::Chunked { .. } => task(CHUNKED, None, &input),
             Source::Node(_) => task(MERGE, None, &input),
         })

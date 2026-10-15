@@ -33,4 +33,4 @@ Runs (`Run`)
 `Chat::spawn_summariser(thread)` (for `ai chat sync-session`)
 - Unless `ai.chat.summarise` is false: this executable as `chat summarise -t <name>` from the repository's work tree (else its git dir), detached by `memory::log::spawn` (stdin/stdout null, stderr to the thread's log, own process group). No readiness check: a summariser with nothing to do exits after one pass, and sync stays fast.
 
-Smoke (2026-10-15, haiku, throwaway repo, synthetic 4-exchange thread): 3 calls, 1 free exchange line, 1 node; the spawning process's piped stdout closed at once (spawn 0.3 ms); a second summariser exited `busy`.
+Smoke (2026-10-15, haiku, throwaway repo, synthetic 4-turn thread): 3 calls, 1 free turn line, 1 node; the spawning process's piped stdout closed at once (spawn 0.3 ms); a second summariser exited `busy`.

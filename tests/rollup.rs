@@ -78,8 +78,8 @@ impl Script {
         self.last = Some(format!("e{seq}"));
     }
 
-    /// An exchange of a short prompt and a reply too long to be its own line.
-    fn exchange(&mut self, k: usize) -> u64 {
+    /// A turn of a short prompt and a reply too long to be its own line.
+    fn turn(&mut self, k: usize) -> u64 {
         self.user(&format!("task {k}"));
         self.ai(&format!("done {k}: {}", "r".repeat(600)))
     }
@@ -180,9 +180,9 @@ impl Fake {
 fn reply(task: &str) -> String {
     let input = task.split_once("<input>\n").expect("an input").1;
     let verb = [
-        ("Compress this exchange", "exchange"),
+        ("Compress this turn", "turn"),
         ("Compress this part", "part"),
-        ("Compress this long exchange", "chunked"),
+        ("Compress this long turn", "chunked"),
         ("Merge these", "merge"),
     ]
     .into_iter()
@@ -270,7 +270,7 @@ fn head(r: &Repo) -> String {
 }
 
 #[test]
-fn short_exchanges_and_their_nodes_are_free_lines() {
+fn short_turns_and_their_nodes_are_free_lines() {
     let r = Repo::new();
     let mut s = Script::new();
     s.user("hi");
@@ -289,7 +289,7 @@ fn short_exchanges_and_their_nodes_are_free_lines() {
         [key(1, a), key(1, b), key(2, b)]
     );
     assert_eq!(l[&key(1, a)].text, "0|user: hi 1|ai: Hello.");
-    assert_eq!(l[&key(1, a)].kind, LineKind::Exchange);
+    assert_eq!(l[&key(1, a)].kind, LineKind::Turn);
     assert_eq!(l[&key(1, a)].who.model, "");
     assert_eq!(
         l[&key(2, b)].text,
@@ -302,13 +302,13 @@ fn short_exchanges_and_their_nodes_are_free_lines() {
 fn every_level_is_built_and_only_once() {
     let r = Repo::new();
     let mut s = Script::new();
-    let e0 = s.exchange(0);
-    let e1 = s.exchange(1);
+    let e0 = s.turn(0);
+    let e1 = s.turn(1);
     let big = s.user("read every file");
     s.steps(14);
     let e2 = s.ai("read them all");
-    let e3 = s.exchange(3);
-    let e4 = s.exchange(4);
+    let e3 = s.turn(3);
+    let e4 = s.turn(4);
     s.user("next");
     let t = r.thread(&s);
 
@@ -323,10 +323,7 @@ fn every_level_is_built_and_only_once() {
         b.lines(),
         [key(1, e0), key(1, e1), key(1, e2), key(1, e3), key(1, e4)]
     );
-    assert!(
-        b.line(&b.parts[5]).is_none(),
-        "the open exchange has no line"
-    );
+    assert!(b.line(&b.parts[5]).is_none(), "the open turn has no line");
     assert_eq!(
         roll.source(key(1, e2)),
         Some(&Source::Chunked {
@@ -346,11 +343,11 @@ fn every_level_is_built_and_only_once() {
             format!("0@{e2}"),
             format!("part #{}..#{e2}", chunks[0].last + 1),
         ),
-        (format!("1@{e0}"), format!("exchange #0..#{e0}")),
-        (format!("1@{e1}"), format!("exchange #{}..#{e1}", e0 + 1)),
+        (format!("1@{e0}"), format!("turn #0..#{e0}")),
+        (format!("1@{e1}"), format!("turn #{}..#{e1}", e0 + 1)),
         (format!("1@{e2}"), format!("chunked #{big}..#{e2}")),
-        (format!("1@{e3}"), format!("exchange #{}..#{e3}", e2 + 1)),
-        (format!("1@{e4}"), format!("exchange #{}..#{e4}", e3 + 1)),
+        (format!("1@{e3}"), format!("turn #{}..#{e3}", e2 + 1)),
+        (format!("1@{e4}"), format!("turn #{}..#{e4}", e3 + 1)),
         (format!("2@{e1}"), format!("merge #0..#{e1}")),
         (format!("2@{e3}"), format!("merge #{big}..#{e3}")),
         (
@@ -367,7 +364,7 @@ fn every_level_is_built_and_only_once() {
     assert_eq!(fake.calls(), 10, "each line once");
     let l = lines(&t);
     assert_eq!(l[&chunks[0]].kind, LineKind::Chunk);
-    assert_eq!(l[&key(1, e2)].kind, LineKind::Exchange);
+    assert_eq!(l[&key(1, e2)].kind, LineKind::Turn);
     assert_eq!(l[&key(3, e3)].kind, LineKind::Node);
     assert_eq!(
         (
@@ -392,7 +389,7 @@ fn every_level_is_built_and_only_once() {
     );
     let whole = tasks
         .iter()
-        .find(|t| t.contains("long exchange, given"))
+        .find(|t| t.contains("long turn, given"))
         .unwrap();
     assert!(whole.contains(&format!(
         "<input>\n{big}|user: read every file\npart #{}-#",
@@ -406,7 +403,7 @@ fn a_second_summariser_finds_nothing_to_build() {
     let r = Repo::new();
     let mut s = Script::new();
     for k in 0..5 {
-        s.exchange(k);
+        s.turn(k);
     }
     s.user("open");
     let t = r.thread(&s);
@@ -432,14 +429,14 @@ fn a_second_summariser_finds_nothing_to_build() {
 fn branches_share_the_lines_of_their_common_prefix() {
     let r = Repo::new();
     let mut s = Script::new();
-    let e0 = s.exchange(0);
-    let e1 = s.exchange(1);
-    let a2 = s.exchange(2);
-    let a3 = s.exchange(3);
+    let e0 = s.turn(0);
+    let e1 = s.turn(1);
+    let a2 = s.turn(2);
+    let a3 = s.turn(3);
     s.user("open a");
     s.at(e1);
-    let b2 = s.exchange(12);
-    let b3 = s.exchange(13);
+    let b2 = s.turn(12);
+    let b3 = s.turn(13);
     s.user("open b");
     let t = r.thread(&s);
     let tree = t.snapshot().unwrap().tree().unwrap();
@@ -475,7 +472,7 @@ fn branches_share_the_lines_of_their_common_prefix() {
 }
 
 #[test]
-fn an_open_exchange_gets_its_finished_chunks() {
+fn an_open_turn_gets_its_finished_chunks() {
     let r = Repo::new();
     let mut s = Script::new();
     s.user("survey the code");
@@ -496,11 +493,11 @@ fn an_open_exchange_gets_its_finished_chunks() {
 fn build_makes_the_lines_asked_and_what_they_need() {
     let r = Repo::new();
     let mut s = Script::new();
-    let e0 = s.exchange(0);
-    let e1 = s.exchange(1);
+    let e0 = s.turn(0);
+    let e1 = s.turn(1);
     s.user("read every file");
     let e2 = s.steps(14);
-    s.exchange(3);
+    s.turn(3);
     s.user("open");
     let t = r.thread(&s);
     let fake = Fake::new();
@@ -523,7 +520,7 @@ fn build_makes_the_lines_asked_and_what_they_need() {
 fn build_returns_at_its_deadline() {
     let r = Repo::new();
     let mut s = Script::new();
-    let e0 = s.exchange(0);
+    let e0 = s.turn(0);
     s.user("hi");
     let e1 = s.ai("hello");
     s.user("open");
@@ -551,7 +548,7 @@ fn build_returns_at_its_deadline() {
 fn a_held_lock_makes_a_second_summariser_exit_at_once() {
     let r = Repo::new();
     let mut s = Script::new();
-    s.exchange(0);
+    s.turn(0);
     s.user("open");
     let t = r.thread(&s);
     let fake = Fake::new();
@@ -574,7 +571,7 @@ fn build_waits_for_a_running_summariser_and_calls_for_nothing_it_built() {
     let r = Repo::new();
     let mut s = Script::new();
     for k in 0..3 {
-        s.exchange(k);
+        s.turn(k);
     }
     s.user("open");
     let t = r.thread(&s);
@@ -615,7 +612,7 @@ fn build_waits_for_a_running_summariser_and_calls_for_nothing_it_built() {
 fn build_gives_up_on_a_lock_held_past_its_deadline() {
     let r = Repo::new();
     let mut s = Script::new();
-    let e0 = s.exchange(0);
+    let e0 = s.turn(0);
     s.user("open");
     let t = r.thread(&s);
     let held = r
@@ -650,8 +647,8 @@ fn build_gives_up_on_a_lock_held_past_its_deadline() {
 fn a_dry_run_builds_in_memory_and_stores_nothing() {
     let r = Repo::new();
     let mut s = Script::new();
-    let e0 = s.exchange(0);
-    let e1 = s.exchange(1);
+    let e0 = s.turn(0);
+    let e1 = s.turn(1);
     s.user("open");
     let t = r.thread(&s);
     let old = Fake::new();
@@ -689,7 +686,7 @@ fn a_dry_run_builds_in_memory_and_stores_nothing() {
     assert!(
         d.lines
             .iter()
-            .all(|l| l.text.starts_with("exchange ") || l.text.starts_with("merge "))
+            .all(|l| l.text.starts_with("turn ") || l.text.starts_with("merge "))
     );
     assert_eq!((texts(&t), head(&r)), (before, at), "nothing stored");
 }
@@ -699,7 +696,7 @@ fn rebuild_drops_every_line_and_writes_them_again() {
     let r = Repo::new();
     let mut s = Script::new();
     for k in 0..3 {
-        s.exchange(k);
+        s.turn(k);
     }
     s.user("open");
     let t = r.thread(&s);
@@ -737,10 +734,10 @@ fn rebuild_drops_every_line_and_writes_them_again() {
 fn failed_lines_stay_unbuilt_and_a_failing_model_stops_the_summariser() {
     let r = Repo::new();
     let mut s = Script::new();
-    let e0 = s.exchange(0);
+    let e0 = s.turn(0);
     s.user("poison");
     let e1 = s.ai(&"p".repeat(600));
-    let e2 = s.exchange(2);
+    let e2 = s.turn(2);
     s.user("open");
     let t = r.thread(&s);
     let fake = Fake::with(Duration::from_millis(2), |t| t.contains("poison"));
@@ -757,7 +754,7 @@ fn failed_lines_stay_unbuilt_and_a_failing_model_stops_the_summariser() {
     let r = Repo::new();
     let mut s = Script::new();
     for k in 0..5 * JOBS {
-        s.exchange(k);
+        s.turn(k);
     }
     s.user("open");
     let t = r.thread(&s);

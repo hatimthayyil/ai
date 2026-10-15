@@ -21,7 +21,7 @@ Why this split
 - Sync must know every entry the thread holds (dedupe) and resolve parents; the index gives both from one small blob per 256 items (3,669 items: 15 blobs, 2.7 ms). Content and raw lines are variable size (tool output, base64 images: 13 MB of raw lines for 3,669 items), so each is its own blob: an appended item never rewrites an older one, and a sync reads none of them.
 - The index holds no content and the item blob no structure, so nothing is stored twice. `heads` is the cheap structural read (listing, tips, sync); `items`/`tree` read every blob (154 ms for 3,669 items, release), for the roll-up and the view.
 - Subagents get their own numbering so the main tree's positions stay its sequence numbers: `Snapshot::tree` is `model::Tree` over the main items, and a subagent's items never show as a branch or tip of the conversation.
-- Lines are one blob each: written once, never rewritten, few per exchange.
+- Lines are one blob each: written once, never rewritten, few per turn.
 
 Items
 - Append-only. An item's sequence number is its position; its parent is an earlier number, so the tree has no cycles and `model::Tree` rebuilt from `items` gives back the stored links (each stored item's `parent` is the source id of its stored parent).
@@ -30,12 +30,12 @@ Items
 - Subagents: each `Subagent` from the adapter goes to its own sequence, deduped the same way; `call` is found by the Agent tool call id among the session's items. The agent record is rewritten only when it changes (a call found later).
 
 Lines
-- `put_line`: first write wins and returns the stored line; a key past the last item is refused. Kind (`chunk`, `exchange`, `node`) and who wrote it (`memory::Who`: agent, model, session) are stored with the text; the level numbering is the roll-up's (rollup.rs.md).
-- `put_lines`: the same for many lines in one commit (`line <key>` for one, `<n> lines` for more): the compactor writes each round of free lines at once, so a first summariser over a long history does not make a commit per short exchange.
+- `put_line`: first write wins and returns the stored line; a key past the last item is refused. Kind (`chunk`, `turn`, `node`) and who wrote it (`memory::Who`: agent, model, session) are stored with the text; the level numbering is the roll-up's (rollup.rs.md).
+- `put_lines`: the same for many lines in one commit (`line <key>` for one, `<n> lines` for more): the compactor writes each round of free lines at once, so a first summariser over a long history does not make a commit per short turn.
 - `all_lines`: every line by key, one walk per level directory; the compactor reads it once per pass.
 
 Queries
-- `Chat::list`: per thread its newest item (harness, session, time) and tips from the index; its turns (exchanges on the newest branch, from the tree) and its sessions, each with the time of its newest item (else of its attaching), newest first. `Chat::holds(dir)`: `dir` is in this repository (gix discover from it reaches the same canonical common git dir). `Thread::drop_lines`: removes the `lines` tree in one commit (`Changes::remove`), for `summarise --rebuild`. `Snapshot::tree` and `model::Tree::path`/`branch` give the item tree and the path to a tip; `Snapshot::tip(harness, session)` the newest tip of a session; `Snapshot::line`/`lines` lines by key and by level.
+- `Chat::list`: per thread its newest item (harness, session, time) and tips from the index; its turns (turns on the newest branch, from the tree) and its sessions, each with the time of its newest item (else of its attaching), newest first. `Chat::holds(dir)`: `dir` is in this repository (gix discover from it reaches the same canonical common git dir). `Thread::drop_lines`: removes the `lines` tree in one commit (`Changes::remove`), for `summarise --rebuild`. `Snapshot::tree` and `model::Tree::path`/`branch` give the item tree and the path to a tip; `Snapshot::tip(harness, session)` the newest tip of a session; `Snapshot::line`/`lines` lines by key and by level.
 - `Thread::snapshot_at`: the thread as of one of its commits (`Snapshot::as_ref().commit()`), so the parts of a paged view all read one state.
 - A `Snapshot` borrows its `Thread`: bind the thread first (`let t = chat.thread(name)?; let s = t.snapshot()?;`).
 

@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::{
     chat::{
-        model::{Exchange, Item, Kind, Tree},
+        model::{Item, Kind, Tree, Turn},
         record::Key,
         render::{Cut, item_line},
         rollup,
@@ -17,7 +17,7 @@ use crate::{
 pub const VIEW: usize = 128_000;
 /// The user rail's share of the view.
 pub const RAIL: usize = 8_000;
-/// The open exchange's share of the view.
+/// The open turn's share of the view.
 pub const OPEN: usize = 32_000;
 /// The longest summary line; the fold reckons an unbuilt line at this size.
 pub const LINE: usize = 512;
@@ -26,9 +26,9 @@ const WORDS: usize = 8_000;
 /// The most of one tool call or result a listing prints.
 const TOOL: usize = 2_000;
 
-const FOLD: &str = "Earlier exchanges, summarized";
+const FOLD: &str = "Earlier turns, summarized";
 const USER: &str = "The user's latest messages";
-const CURRENT: &str = "The exchange in progress";
+const CURRENT: &str = "The turn in progress";
 
 const INSTRUCTION: &str = "\
 This is your memory of the thread `{name}`: the conversation so far, oldest first. It stands in \
@@ -78,7 +78,7 @@ impl fmt::Display for Id {
     }
 }
 
-/// The fold over `t` closed exchanges: from one line each, merges the most due aligned pair,
+/// The fold over `t` closed turns: from one line each, merges the most due aligned pair,
 /// due = (t - last)/2^l, oldest first on a tie, until the lines' `cost` fits `budget`.
 pub fn fold(t: u64, budget: usize, cost: impl Fn(Coord) -> usize) -> Vec<Coord> {
     let mut view: Vec<Coord> = (0..t).map(Coord::leaf).collect();
@@ -105,15 +105,15 @@ pub fn fold(t: u64, budget: usize, cost: impl Fn(Coord) -> usize) -> Vec<Coord> 
     view
 }
 
-/// A session's branch of a thread: its items from the root to its tip, cut into exchanges, with
-/// the lines built over them. Coordinates of the fold count exchanges along the branch: (l, i)
-/// covers exchanges [i·2^l, (i+1)·2^l), the line of level 1+l.
+/// A session's branch of a thread: its items from the root to its tip, cut into turns, with
+/// the lines built over them. Coordinates of the fold count turns along the branch: (l, i)
+/// covers turns [i·2^l, (i+1)·2^l), the line of level 1+l.
 pub struct Branch {
     tree: Tree,
     /// The sequence numbers from the root to the tip, increasing.
     path: Vec<usize>,
-    xs: Vec<Exchange>,
-    /// Each exchange's chunks, as the roll-up cuts it.
+    xs: Vec<Turn>,
+    /// Each turn's chunks, as the roll-up cuts it.
     cuts: Vec<Vec<Range<usize>>>,
     lines: HashMap<Key, String>,
 }
@@ -123,7 +123,7 @@ impl Branch {
     pub fn new(tree: Tree, tip: Option<u64>, lines: HashMap<Key, String>) -> Branch {
         let b = tip.map(|t| rollup::branch(&tree, t as usize));
         let (path, parts) = b.map_or_else(Default::default, |b| (b.seqs, b.parts));
-        let (xs, cuts) = parts.into_iter().map(|p| (p.exchange, p.chunks)).unzip();
+        let (xs, cuts) = parts.into_iter().map(|p| (p.turn, p.chunks)).unzip();
         Branch {
             tree,
             path,
@@ -143,8 +143,8 @@ impl Branch {
         Ok(Branch::new(s.tree()?, tip, lines))
     }
 
-    /// The view: the instruction, the fold over the closed exchanges, the user rail and the
-    /// open exchange, in at most [`VIEW`] bytes.
+    /// The view: the instruction, the fold over the closed turns, the user rail and the
+    /// open turn, in at most [`VIEW`] bytes.
     pub fn view(&self, thread: &str) -> String {
         let (head, rail, open) = self.frame(thread);
         let fold = section(FOLD, &self.render(self.budget(&head, &rail, &open)));
@@ -161,12 +161,12 @@ impl Branch {
             .collect()
     }
 
-    /// Line `id` opened one level down: a node into its two halves, an exchange or part of one
+    /// Line `id` opened one level down: a node into its two halves, a turn or part of one
     /// into its chunk lines and items. `None` if `id` is not a line of this branch, whose tip
     /// must be `id.last`.
     pub fn open(&self, id: Id) -> Option<String> {
         let a = self.path.binary_search(&(id.first as usize)).ok()?;
-        let (ea, eb) = (self.exchange_at(a), self.xs.len() - 1);
+        let (ea, eb) = (self.turn_at(a), self.xs.len() - 1);
         let r = a..self.path.len();
         let lines = if a != self.xs[ea].span.start || ea == eb {
             (ea == eb).then(|| self.inside(r))?
@@ -224,7 +224,7 @@ impl Branch {
         }
     }
 
-    /// The positions on the path of the exchanges `c` covers.
+    /// The positions on the path of the turns `c` covers.
     fn span(&self, c: Coord) -> Range<usize> {
         self.xs[c.id() as usize].span.start..self.xs[c.end() as usize - 1].span.end
     }
@@ -240,22 +240,22 @@ impl Branch {
         self.lines.get(&self.key(c)).map(String::as_str)
     }
 
-    fn exchange_at(&self, p: usize) -> usize {
+    fn turn_at(&self, p: usize) -> usize {
         self.xs.partition_point(|x| x.span.end <= p)
     }
 
-    /// Whether item `p` opens an exchange: a message from the user or another agent.
+    /// Whether item `p` opens a turn: a message from the user or another agent.
     fn opens(&self, p: usize) -> bool {
         matches!(self.item(p).kind, Kind::User(_) | Kind::Work { .. })
     }
 
-    /// Where exchange `e`'s steps start: after its message.
+    /// Where turn `e`'s steps start: after its message.
     fn body(&self, e: usize) -> usize {
         let s = self.xs[e].span.start;
         s + usize::from(self.opens(s))
     }
 
-    /// The chunk lines built in exchange `e`, consecutive from its first step, each with the
+    /// The chunk lines built in turn `e`, consecutive from its first step, each with the
     /// positions it covers.
     fn chunks(&self, e: usize) -> Vec<(Range<usize>, &str)> {
         self.cuts[e]
@@ -354,7 +354,7 @@ impl Branch {
         }
     }
 
-    /// The newest messages of the user in closed exchanges, oldest first, in about [`RAIL`]
+    /// The newest messages of the user in closed turns, oldest first, in about [`RAIL`]
     /// bytes; the newest always.
     fn rail(&self) -> Vec<String> {
         let mut out = Vec::new();
@@ -375,7 +375,7 @@ impl Branch {
         out
     }
 
-    /// The open exchange: its message, then its chunk lines and the steps after them, the
+    /// The open turn: its message, then its chunk lines and the steps after them, the
     /// newest that fit in [`OPEN`] bytes; the newest item always.
     fn current(&self) -> Vec<String> {
         let Some(e) = self.xs.len().checked_sub(1) else {
@@ -430,11 +430,11 @@ impl Branch {
         out
     }
 
-    /// What `r`, within one exchange, holds: the chunk lines inside it other than itself, and
+    /// What `r`, within one turn, holds: the chunk lines inside it other than itself, and
     /// its other items.
     fn inside(&self, r: Range<usize>) -> Vec<String> {
         let chunks: Vec<_> = self
-            .chunks(self.exchange_at(r.start))
+            .chunks(self.turn_at(r.start))
             .into_iter()
             .filter(|(c, _)| r.start <= c.start && c.end <= r.end && *c != r)
             .collect();
@@ -586,7 +586,7 @@ mod tests {
         assert_eq!(
             names(fold(10, 300, |_| 100)),
             ["0+4", "4+4", "8+2"],
-            "due counts from a pair's last exchange: 8-9 merges before 0-7"
+            "due counts from a pair's last turn: 8-9 merges before 0-7"
         );
         assert_eq!(names(fold(10, 1000, |_| 100)).len(), 10);
         assert_eq!(
@@ -628,7 +628,7 @@ mod tests {
         assert_eq!(
             b.needed("dev"),
             [key(5), key(9), key(11), key(13)],
-            "every exchange fits: the fold wants the unbuilt exchange lines"
+            "every turn fits: the fold wants the unbuilt turn lines"
         );
     }
 
@@ -638,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unbuilt_exchange_shows_its_message_and_chunks() {
+    fn an_unbuilt_turn_shows_its_message_and_chunks() {
         // Three steps of a 20 KB reply: over the roll-up's 48 KB input, cut 1-6 and 7-9.
         let text = padded(|i| if [1, 4, 7].contains(&i) { 20_000 } else { 0 });
         let render =
@@ -662,8 +662,8 @@ mod tests {
         );
     }
 
-    /// Level-1 lines over each of `n` two-item exchanges, each `text`.
-    fn exchange_lines(n: u64, text: &str) -> Vec<(u32, u64, String)> {
+    /// Level-1 lines over each of `n` two-item turns, each `text`.
+    fn turn_lines(n: u64, text: &str) -> Vec<(u32, u64, String)> {
         (0..n)
             .map(|e| (1, 2 * e + 1, format!("{e} {text}")))
             .collect()
@@ -675,7 +675,7 @@ mod tests {
 
     #[test]
     fn fallbacks_collapse_to_placeholders_over_budget() {
-        let lines = exchange_lines(64, &"x".repeat(200));
+        let lines = turn_lines(64, &"x".repeat(200));
         let b = branch(chain(&"ut".repeat(65), short), &as_refs(&lines));
         let fold = b.render(4_000);
         assert!(bytes(&fold) <= 4_000, "{}", bytes(&fold));
@@ -689,7 +689,7 @@ mod tests {
     #[test]
     fn the_view_keeps_its_budget() {
         let spec = "ut".repeat(3000) + "u";
-        let lines = exchange_lines(3000, &"y".repeat(500));
+        let lines = turn_lines(3000, &"y".repeat(500));
         let big = |i: usize| format!("{i} {}", "z".repeat(20_000));
         for b in [
             branch(chain(&spec, short), &as_refs(&lines)),
@@ -708,7 +708,7 @@ mod tests {
     }
 
     #[test]
-    fn the_open_exchange_keeps_its_message_and_newest_steps() {
+    fn the_open_turn_keeps_its_message_and_newest_steps() {
         let text = |i: usize| match i {
             2 => "run the benchmarks".to_string(),
             _ => format!("{i}:{}", "o".repeat(9_000)),
@@ -760,8 +760,8 @@ mod tests {
     }
 
     #[test]
-    fn zoom_opens_nodes_exchanges_and_chunks() {
-        // Exchange 4-8 holds two steps of about 28 and 24 KB: over 48 KB, cut 5-7 and 8.
+    fn zoom_opens_nodes_turns_and_chunks() {
+        // Turn 4-8 holds two steps of about 28 and 24 KB: over 48 KB, cut 5-7 and 8.
         let text = padded(|i| match i {
             5 | 8 => 24_000,
             7 => 10_000,
@@ -796,7 +796,7 @@ mod tests {
         assert_eq!(
             ids(open(8, 4).unwrap()),
             ["4 user:", "5-7 ran", "8 ai:"],
-            "an exchange: its message, chunk lines, items"
+            "a turn: its message, chunk lines, items"
         );
         assert_eq!(
             ids(open(7, 5).unwrap()),
@@ -805,11 +805,11 @@ mod tests {
         );
         assert!(open(7, 5).unwrap().contains("\n6|call Bash: m6\n"));
         assert_eq!(ids(open(8, 6).unwrap()), ["6 call", "7 result:", "8 ai:"]);
-        assert_eq!(open(5, 0), None, "three exchanges are no line");
+        assert_eq!(open(5, 0), None, "three turns are no line");
         assert_eq!(
             open(3, 1),
             None,
-            "it starts in one exchange and ends in another"
+            "it starts in one turn and ends in another"
         );
         assert_eq!(open(3, 9), None);
     }

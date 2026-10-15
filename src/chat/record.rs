@@ -66,17 +66,17 @@ impl fmt::Display for Key {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LineKind {
-    /// Consecutive steps of an exchange too long for one call.
+    /// Consecutive steps of a turn too long for one call.
     Chunk,
-    /// One exchange.
-    Exchange,
+    /// One turn.
+    Turn,
     /// Two adjacent lines merged.
     Node,
 }
 
 const LINE_KINDS: [(LineKind, &str); 3] = [
     (LineKind::Chunk, "chunk"),
-    (LineKind::Exchange, "exchange"),
+    (LineKind::Turn, "exchange"),
     (LineKind::Node, "node"),
 ];
 
@@ -468,7 +468,7 @@ mod tests {
         assert_eq!(back.description, "Survey storage");
         let l = Line {
             ts: t("2026-10-14T10:00:00Z"),
-            kind: LineKind::Exchange,
+            kind: LineKind::Turn,
             who: Who {
                 agent: "claude-code".into(),
                 model: "claude-haiku-5-5".into(),

@@ -429,19 +429,14 @@ fn lines_are_built_once() {
     };
     let key = Key { level: 1, last: 1 };
     let first = t
-        .put_line(key, LineKind::Exchange, &who, "user: hi; ai: hello")
+        .put_line(key, LineKind::Turn, &who, "user: hi; ai: hello")
         .unwrap();
     let again = t
-        .put_line(key, LineKind::Exchange, &Who::default(), "other")
+        .put_line(key, LineKind::Turn, &Who::default(), "other")
         .unwrap();
     assert_eq!(again, first, "a built line never changes");
-    t.put_line(
-        Key { level: 1, last: 3 },
-        LineKind::Exchange,
-        &who,
-        "second",
-    )
-    .unwrap();
+    t.put_line(Key { level: 1, last: 3 }, LineKind::Turn, &who, "second")
+        .unwrap();
     t.put_line(Key { level: 0, last: 3 }, LineKind::Chunk, &who, "chunk")
         .unwrap();
     let s = t.snapshot().unwrap();

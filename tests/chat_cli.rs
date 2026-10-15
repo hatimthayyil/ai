@@ -5,7 +5,7 @@ use std::{
 };
 
 use ai_tools::{
-    chat::{Chat, Key, LineKind, NOT_ATTACHED, Tree, VIEW, claude, exchanges},
+    chat::{Chat, Key, LineKind, NOT_ATTACHED, Tree, VIEW, claude, turns},
     memory::Who,
 };
 use serde_json::{Value, json};
@@ -178,7 +178,7 @@ impl Sandbox {
     fn line(&self, name: &str, level: u32, last: u64, text: &str) {
         let kind = match level {
             0 => LineKind::Chunk,
-            1 => LineKind::Exchange,
+            1 => LineKind::Turn,
             _ => LineKind::Node,
         };
         let t = self.chat().thread(name).unwrap();
@@ -224,7 +224,7 @@ fn fixture(name: &str) -> String {
     fs::read_to_string(p.join(name)).unwrap()
 }
 
-/// A transcript of `n` exchanges: the user's `ask(k)` and a reply.
+/// A transcript of `n` turns: the user's `ask(k)` and a reply.
 fn talk(n: usize, ask: impl Fn(usize) -> String) -> String {
     let mut out = String::new();
     let mut parent = Value::Null;
@@ -258,13 +258,13 @@ fn ran_in(text: &str, dir: &Path) -> String {
         .collect()
 }
 
-/// The sequence number of the last item of each exchange on the newest branch of `name`.
-fn exchange_ends(s: &Sandbox, name: &str) -> Vec<u64> {
+/// The sequence number of the last item of each turn on the newest branch of `name`.
+fn turn_ends(s: &Sandbox, name: &str) -> Vec<u64> {
     let t = s.chat().thread(name).unwrap();
     let tree: Tree = t.snapshot().unwrap().tree().unwrap();
     let tip = *tree.tips().last().unwrap();
     let branch = tree.branch(tip);
-    exchanges(&tree.path(tip))
+    turns(&tree.path(tip))
         .iter()
         .map(|x| branch[x.span.end - 1] as u64)
         .collect()
@@ -396,25 +396,25 @@ fn compact_session_syncs_and_prints_the_view() {
         "Attached to dev, a new thread.\n",
     );
     s.transcript("s-1", &all);
-    let ends = exchange_ends(&s, "dev");
+    let ends = turn_ends(&s, "dev");
     s.line("dev", 1, ends[0], "user asked to run the tests; two failed");
     let o = s.ai(&["compact-session", "--harness", "claude", "--session", "s-1"]);
     assert_eq!((code(&o), stderr(&o).as_str()), (0, ""));
     let view = stdout(&o);
     assert!(view.starts_with("# Thread `dev`\n\nThis is your memory of the thread `dev`"));
     assert!(view.contains("`ai chat zoom a-b`"));
-    let ends = exchange_ends(&s, "dev");
+    let ends = turn_ends(&s, "dev");
     assert_eq!(
         ends.len(),
         4,
         "compact-session synced the rest of the transcript"
     );
-    let fold = section(&view, "Earlier exchanges, summarized");
+    let fold = section(&view, "Earlier turns, summarized");
     assert_eq!(fold.len(), 3);
     assert!(fold[0].ends_with("|user asked to run the tests; two failed"));
     assert!(
         fold[1].starts_with("4-10|4|user: Skip the network tests. 5|ai: "),
-        "compact-session built the short exchange as its own line: {fold:#?}"
+        "compact-session built the short turn as its own line: {fold:#?}"
     );
     assert!(fold[2].starts_with("11-13|11|user: Don't commit yet."));
     let rail = section(&view, "The user's latest messages");
@@ -422,7 +422,7 @@ fn compact_session_syncs_and_prints_the_view() {
         rail.iter()
             .any(|l| l.ends_with("|user: Skip the network tests."))
     );
-    let open = section(&view, "The exchange in progress");
+    let open = section(&view, "The turn in progress");
     assert!(open[0].starts_with(&format!("{}|user: ", ends[2] + 1)));
     assert!(view.len() <= VIEW);
 }
@@ -482,7 +482,7 @@ fn view_prints_a_thread_in_parts_from_one_commit() {
         s.ai_in("s-2", &["attach", "long-one"]),
         "Attached to long-one, a new thread.\n",
     );
-    let ends = exchange_ends(&s, "long-one");
+    let ends = turn_ends(&s, "long-one");
     let text = |k: usize| format!("{k} {}", "w".repeat(500));
     for (k, &end) in ends.iter().enumerate().filter(|e| e.0 != 60) {
         s.line("long-one", 1, end, &text(k));
@@ -542,19 +542,19 @@ fn view_syncs_its_session_and_writes_the_lines_it_needs() {
 
     let outside = stdout(&s.ai(&["view", "-t", "dev"]));
     assert!(
-        section(&outside, "The exchange in progress")[0].ends_with("|user: question 1"),
+        section(&outside, "The turn in progress")[0].ends_with("|user: question 1"),
         "outside the session, nothing is synced: {outside}"
     );
-    assert_eq!(lines(&s), 1, "the closed exchange's line is written");
-    assert!(section(&outside, "Earlier exchanges, summarized")[0].starts_with("0-1|0|user: "));
+    assert_eq!(lines(&s), 1, "the closed turn's line is written");
+    assert!(section(&outside, "Earlier turns, summarized")[0].starts_with("0-1|0|user: "));
 
     let inside = stdout(&s.ai_in("s-1", &["view"]));
     assert!(
-        section(&inside, "The exchange in progress")[0].ends_with("|user: question 3"),
+        section(&inside, "The turn in progress")[0].ends_with("|user: question 3"),
         "the session's view syncs it first: {inside}"
     );
     assert_eq!(lines(&s), 3);
-    assert_eq!(section(&inside, "Earlier exchanges, summarized").len(), 3);
+    assert_eq!(section(&inside, "Earlier turns, summarized").len(), 3);
     assert!(!inside.contains("not summarized yet"), "{inside}");
 }
 
@@ -655,7 +655,7 @@ fn start_binds_a_new_session_and_starts_claude() {
     assert_eq!(code(&o), 0, "{}", stderr(&o));
     assert!(seed.starts_with("# Thread `dev`"), "{seed}");
     assert!(
-        section(&seed, "The exchange in progress")
+        section(&seed, "The turn in progress")
             .last()
             .is_some_and(|l| l.starts_with("3|")),
         "a new session's view ends at its graft: {seed}"
