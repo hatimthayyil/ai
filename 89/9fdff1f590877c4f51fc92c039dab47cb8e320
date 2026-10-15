@@ -1,0 +1,22 @@
+ai/backlog.md
+  s_77b04d9838f161::t_6df5e2869307af 19-28
+ai/comments/plugins/claude/hooks/register.ts.md
+  s_77b04d9838f161::t_8cdcf10f1beb68 22
+  s_77b04d9838f161::t_ebceb3e0ed915f 21,23-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "899fdff1f590877c4f51fc92c039dab47cb8e320",
+  "prompts": {},
+  "sessions": {
+    "s_77b04d9838f161": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "799603ff-89ac-4e8a-9cfb-a9648c74f1fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Hatim Thayyil <hatim@thayyil.net>"
+    }
+  }
+}
