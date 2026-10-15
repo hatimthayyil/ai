@@ -51,3 +51,7 @@
 - `open exchange`: a branch's last exchange, not yet closed; the view shows its message, chunk lines and newest steps raw (`OPEN` = 32,000 bytes).
 - `placeholder` (chat): `a-b|(not summarized yet: zoom a-b)`, a line the roll-up has not built; `(not shown: zoom a-b)`, the steps of the open exchange left out for room.
 - `launcher`: `ai chat claude <name> [-- args]`: a new session id bound to the thread with its future transcript, then `exec claude --session-id`.
+- `roll-up`: a thread's lines and what each is made from (`chat::Rollup`), over every branch: chunk lines (level 0), exchange lines of closed exchanges (1), binary nodes over aligned pairs of closed exchanges along the branch (1+k). Built by the chat compactor.
+- `chunk`: consecutive steps of an exchange whose rendering is over `INPUT` (48 KB), cut greedily at step boundaries (an over-budget step before its tool calls); final once another chunk follows it. Its call reads the exchange's message as context.
+- `free line` (chat): a line whose input fits 512 B is that input, flattened, with no model call.
+- `nap` (chat): `ai chat nap --thread <name>`: the thread's background compactor, one per thread (its lock), building every ready line until none is; `sync` starts it unless `ai.chat.nap` is false.

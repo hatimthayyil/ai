@@ -1,0 +1,625 @@
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::PathBuf,
+    process::Command,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::{Duration, Instant},
+};
+
+use ai_tools::{
+    chat::{Built, Chat, Key, Line, LineKind, Rollup, Source, Thread, build, nap, rollup},
+    memory::{Backend, Block, Conversation, JOBS, NODE, SCALE, claude},
+};
+use anyhow::{Result, bail};
+use regex::Regex;
+use serde_json::{Value, json};
+use tempfile::TempDir;
+
+/// A Claude Code transcript, entry by entry; each entry is one item, numbered in file order.
+struct Script {
+    lines: Vec<String>,
+    last: Option<String>,
+}
+
+impl Script {
+    fn new() -> Script {
+        Script {
+            lines: Vec::new(),
+            last: None,
+        }
+    }
+
+    /// Adds `v` after the last entry; returns its item's sequence number.
+    fn entry(&mut self, mut v: Value) -> u64 {
+        let n = self.lines.len() as u64;
+        let uuid = format!("e{n}");
+        v["uuid"] = uuid.clone().into();
+        v["parentUuid"] = self.last.clone().into();
+        v["timestamp"] = format!("2026-10-15T10:{:02}:{:02}.000Z", n / 60, n % 60).into();
+        v["sessionId"] = "s1".into();
+        self.lines.push(format!("{v}\n"));
+        self.last = Some(uuid);
+        n
+    }
+
+    fn user(&mut self, text: &str) -> u64 {
+        self.entry(json!({"type": "user", "origin": {"kind": "human"},
+            "message": {"role": "user", "content": text}}))
+    }
+
+    fn ai(&mut self, text: &str) -> u64 {
+        self.entry(json!({"type": "assistant",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}))
+    }
+
+    fn call(&mut self, name: &str, input: Value) -> u64 {
+        let id = format!("toolu_{}", self.lines.len());
+        self.entry(json!({"type": "assistant", "message": {"role": "assistant",
+            "content": [{"type": "tool_use", "id": id, "name": name, "input": input}]}}))
+    }
+
+    /// The result of the call numbered `call`.
+    fn result(&mut self, call: u64, output: &str) -> u64 {
+        self.entry(json!({"type": "user", "message": {"role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": format!("toolu_{call}"),
+                "content": output}]}}))
+    }
+
+    /// The next entry hangs on entry `seq`: a rewind.
+    fn at(&mut self, seq: u64) {
+        self.last = Some(format!("e{seq}"));
+    }
+
+    /// An exchange of a short prompt and a reply too long to be its own line.
+    fn exchange(&mut self, k: usize) -> u64 {
+        self.user(&format!("task {k}"));
+        self.ai(&format!("done {k}: {}", "r".repeat(600)))
+    }
+
+    /// `n` steps of a text, a Read and a long output; returns the last.
+    fn steps(&mut self, n: usize) -> u64 {
+        let mut last = 0;
+        for j in 0..n {
+            self.ai(&format!("step {j}"));
+            let c = self.call("Read", json!({"file_path": format!("/src/f{j}.rs")}));
+            last = self.result(c, &"x".repeat(10_000));
+        }
+        last
+    }
+}
+
+struct Repo {
+    dir: TempDir,
+}
+
+impl Repo {
+    fn new() -> Repo {
+        let dir = TempDir::new().unwrap();
+        gix::init(dir.path().join("repo")).unwrap();
+        Repo { dir }
+    }
+
+    fn path(&self) -> PathBuf {
+        self.dir.path().join("repo")
+    }
+
+    fn chat(&self) -> Chat {
+        Chat::find(&self.path()).unwrap().unwrap()
+    }
+
+    /// The thread `t`, with `s` attached as session `s1`.
+    fn thread(&self, s: &Script) -> Thread {
+        let p = self.dir.path().join("s1.jsonl");
+        fs::write(&p, s.lines.concat()).unwrap();
+        let chat = self.chat();
+        chat.attach("t", "claude", "s1", Some(&p)).unwrap();
+        chat.thread("t").unwrap()
+    }
+
+    fn git(&self, args: &[&str]) {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(self.path())
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+/// A model that answers each call with a 300-byte line naming its verb and the first and last
+/// item number in its input, so lines show what they cover and two never merge free.
+struct Fake {
+    delay: Duration,
+    fail: Box<dyn Fn(&str) -> bool + Send + Sync>,
+    tasks: Mutex<Vec<String>>,
+    stopped: AtomicBool,
+}
+
+impl Fake {
+    fn new() -> Arc<Fake> {
+        Fake::with(Duration::from_millis(2), |_| false)
+    }
+
+    fn with(delay: Duration, fail: impl Fn(&str) -> bool + Send + Sync + 'static) -> Arc<Fake> {
+        Arc::new(Fake {
+            delay,
+            fail: Box::new(fail),
+            tasks: Mutex::default(),
+            stopped: AtomicBool::new(false),
+        })
+    }
+
+    fn backend(self: &Arc<Fake>) -> Arc<dyn Backend> {
+        Arc::new(Model(self.clone()))
+    }
+
+    fn tasks(&self) -> Vec<String> {
+        self.tasks.lock().unwrap().clone()
+    }
+
+    fn calls(&self) -> usize {
+        self.tasks.lock().unwrap().len()
+    }
+}
+
+fn reply(task: &str) -> String {
+    let input = task.split_once("<input>\n").expect("an input").1;
+    let verb = [
+        ("Compress this exchange", "exchange"),
+        ("Compress this part", "part"),
+        ("Compress this long exchange", "chunked"),
+        ("Merge these", "merge"),
+    ]
+    .into_iter()
+    .find(|v| task.contains(v.0))
+    .expect("a known task")
+    .1;
+    let nums: Vec<&str> = Regex::new(r"#(\d+)")
+        .unwrap()
+        .captures_iter(input)
+        .map(|c| c.get(1).unwrap().as_str())
+        .collect();
+    let line = format!("{verb} #{}..#{}", nums[0], nums[nums.len() - 1]);
+    format!("{line:.<300}")
+}
+
+struct Model(Arc<Fake>);
+
+impl Backend for Model {
+    fn agent(&self) -> &str {
+        "fake-harness"
+    }
+
+    fn model(&self) -> &str {
+        "fake"
+    }
+
+    fn open(&self, system: &str) -> Result<Box<dyn Conversation>> {
+        assert_eq!(system, rollup::PROMPT);
+        Ok(Box::new(Conv(self.0.clone())))
+    }
+
+    fn stop(&self) {
+        self.0.stopped.store(true, Ordering::SeqCst);
+    }
+}
+
+struct Conv(Arc<Fake>);
+
+impl Conversation for Conv {
+    fn say(&mut self, message: &[Block]) -> Result<String> {
+        let [b] = message else {
+            panic!("one block: {message:?}")
+        };
+        assert!(b.text.contains(SCALE), "the ruler");
+        self.0.tasks.lock().unwrap().push(b.text.clone());
+        thread::sleep(self.0.delay);
+        if (self.0.fail)(&b.text) {
+            bail!("fake failure");
+        }
+        Ok(reply(&b.text))
+    }
+
+    fn session(&self) -> String {
+        "fake-session".into()
+    }
+}
+
+fn lines(t: &Thread) -> BTreeMap<Key, Line> {
+    t.snapshot().unwrap().all_lines().unwrap()
+}
+
+fn texts(t: &Thread) -> BTreeMap<String, String> {
+    lines(t)
+        .into_iter()
+        .map(|(k, l)| (k.to_string(), l.text))
+        .collect()
+}
+
+fn key(level: u32, last: u64) -> Key {
+    Key { level, last }
+}
+
+fn napped(t: &Thread, fake: &Arc<Fake>) -> Built {
+    nap(t, fake.backend()).unwrap().expect("the lock is free")
+}
+
+fn head(r: &Repo) -> String {
+    let repo = gix::open(r.path()).unwrap();
+    repo.find_reference("refs/ai/chat/t")
+        .unwrap()
+        .id()
+        .to_string()
+}
+
+#[test]
+fn short_exchanges_and_their_nodes_are_free_lines() {
+    let r = Repo::new();
+    let mut s = Script::new();
+    s.user("hi");
+    let a = s.ai("Hello.");
+    s.user("thanks");
+    let b = s.ai("Welcome.");
+    s.user("bye");
+    let t = r.thread(&s);
+    let fake = Fake::new();
+    let built = napped(&t, &fake);
+    assert_eq!(fake.calls(), 0);
+    assert_eq!((built.lines, built.calls), (3, 0));
+    let l = lines(&t);
+    assert_eq!(
+        l.keys().copied().collect::<Vec<_>>(),
+        [key(1, a), key(1, b), key(2, b)]
+    );
+    assert_eq!(l[&key(1, a)].text, "#0 user: hi #1 ai: Hello.");
+    assert_eq!(l[&key(1, a)].kind, LineKind::Exchange);
+    assert_eq!(l[&key(1, a)].who.model, "");
+    assert_eq!(
+        l[&key(2, b)].text,
+        "#0 user: hi #1 ai: Hello. #2 user: thanks #3 ai: Welcome."
+    );
+    assert_eq!(l[&key(2, b)].kind, LineKind::Node);
+}
+
+#[test]
+fn every_level_is_built_and_only_once() {
+    let r = Repo::new();
+    let mut s = Script::new();
+    let e0 = s.exchange(0);
+    let e1 = s.exchange(1);
+    let big = s.user("read every file");
+    s.steps(14);
+    let e2 = s.ai("read them all");
+    let e3 = s.exchange(3);
+    let e4 = s.exchange(4);
+    s.user("next");
+    let t = r.thread(&s);
+
+    let tree = t.snapshot().unwrap().tree().unwrap();
+    let roll = Rollup::new(&tree);
+    let b = roll.branch(&tree, *tree.tips().last().unwrap());
+    assert_eq!(b.parts.len(), 6);
+    let chunks = b.chunk_keys(&b.parts[2]);
+    assert_eq!(chunks.len(), 2, "14 steps of about 4.2 KB in 48 KB chunks");
+    assert_eq!(chunks[1], key(0, e2));
+    assert_eq!(
+        b.lines(),
+        [key(1, e0), key(1, e1), key(1, e2), key(1, e3), key(1, e4)]
+    );
+    assert!(
+        b.line(&b.parts[5]).is_none(),
+        "the open exchange has no line"
+    );
+    assert_eq!(
+        roll.source(key(1, e2)),
+        Some(&Source::Chunked {
+            message: Some(big),
+            chunks: chunks.clone()
+        })
+    );
+
+    let fake = Fake::new();
+    let built = napped(&t, &fake);
+    let want = [
+        (
+            chunks[0].to_string(),
+            format!("part #{}..#{}", big + 1, chunks[0].last),
+        ),
+        (
+            format!("0@{e2}"),
+            format!("part #{}..#{e2}", chunks[0].last + 1),
+        ),
+        (format!("1@{e0}"), format!("exchange #0..#{e0}")),
+        (format!("1@{e1}"), format!("exchange #{}..#{e1}", e0 + 1)),
+        (format!("1@{e2}"), format!("chunked #{big}..#{e2}")),
+        (format!("1@{e3}"), format!("exchange #{}..#{e3}", e2 + 1)),
+        (format!("1@{e4}"), format!("exchange #{}..#{e4}", e3 + 1)),
+        (format!("2@{e1}"), format!("merge #0..#{e1}")),
+        (format!("2@{e3}"), format!("merge #{big}..#{e3}")),
+        (
+            format!("3@{e3}"),
+            "merge #0..#".to_string() + &e3.to_string(),
+        ),
+    ];
+    let got = texts(&t);
+    assert_eq!(got.len(), want.len(), "{got:#?}");
+    for (k, prefix) in &want {
+        assert!(got[k].starts_with(&format!("{prefix}.")), "{k}: {}", got[k]);
+    }
+    assert_eq!((built.lines, built.calls), (10, 10));
+    assert_eq!(fake.calls(), 10, "each line once");
+    let l = lines(&t);
+    assert_eq!(l[&chunks[0]].kind, LineKind::Chunk);
+    assert_eq!(l[&key(1, e2)].kind, LineKind::Exchange);
+    assert_eq!(l[&key(3, e3)].kind, LineKind::Node);
+    assert_eq!(
+        (
+            l[&key(1, e0)].who.agent.as_str(),
+            l[&key(1, e0)].who.model.as_str()
+        ),
+        ("fake-harness", "fake")
+    );
+    assert!(l.values().all(|l| l.text.len() <= NODE));
+
+    let tasks = fake.tasks();
+    let chunk_tasks: Vec<&String> = tasks
+        .iter()
+        .filter(|t| t.contains("part of a long"))
+        .collect();
+    let context = format!("<context>\n#{big} user: read every file\n</context>");
+    assert!(chunk_tasks.iter().all(|t| t.contains(&context)));
+    assert!(
+        chunk_tasks
+            .iter()
+            .any(|t| t.contains("call Read: file_path=/src/f0.rs"))
+    );
+    let whole = tasks
+        .iter()
+        .find(|t| t.contains("long exchange, given"))
+        .unwrap();
+    assert!(whole.contains(&format!(
+        "<input>\n#{big} user: read every file\npart #{}-#",
+        big + 1
+    )));
+    assert!(tasks.iter().all(|t| t.ends_with("</input>")));
+}
+
+#[test]
+fn a_second_nap_finds_nothing_to_build() {
+    let r = Repo::new();
+    let mut s = Script::new();
+    for k in 0..5 {
+        s.exchange(k);
+    }
+    s.user("open");
+    let t = r.thread(&s);
+    let fake = Fake::new();
+    assert_eq!(napped(&t, &fake).calls, 5 + 2 + 1);
+    let (before, at) = (texts(&t), head(&r));
+    let again = Fake::new();
+    assert_eq!(napped(&t, &again), Built::default());
+    assert_eq!(again.calls(), 0);
+    assert_eq!((texts(&t), head(&r)), (before, at), "no commit");
+    let keys: Vec<Key> = lines(&t).into_keys().collect();
+    let b = build(
+        &t,
+        again.backend(),
+        &keys,
+        Instant::now() + Duration::from_secs(5),
+    )
+    .unwrap();
+    assert_eq!((b, again.calls()), (Built::default(), 0));
+}
+
+#[test]
+fn branches_share_the_lines_of_their_common_prefix() {
+    let r = Repo::new();
+    let mut s = Script::new();
+    let e0 = s.exchange(0);
+    let e1 = s.exchange(1);
+    let a2 = s.exchange(2);
+    let a3 = s.exchange(3);
+    s.user("open a");
+    s.at(e1);
+    let b2 = s.exchange(12);
+    let b3 = s.exchange(13);
+    s.user("open b");
+    let t = r.thread(&s);
+    let tree = t.snapshot().unwrap().tree().unwrap();
+    let roll = Rollup::new(&tree);
+    let tips = tree.tips();
+    assert_eq!(tips.len(), 2);
+    let a = roll.branch(&tree, tips[0]).lines();
+    let b = roll.branch(&tree, tips[1]).lines();
+    assert_eq!(a, [key(1, e0), key(1, e1), key(1, a2), key(1, a3)]);
+    assert_eq!(b, [key(1, e0), key(1, e1), key(1, b2), key(1, b3)]);
+
+    let fake = Fake::new();
+    napped(&t, &fake);
+    let got: Vec<Key> = lines(&t).into_keys().collect();
+    let mut want = vec![
+        key(1, e0),
+        key(1, e1),
+        key(2, e1),
+        key(1, a2),
+        key(1, a3),
+        key(2, a3),
+        key(3, a3),
+        key(1, b2),
+        key(1, b3),
+        key(2, b3),
+        key(3, b3),
+    ];
+    want.sort();
+    assert_eq!(got, want);
+    assert_eq!(fake.calls(), want.len(), "the shared prefix once");
+    let l = texts(&t);
+    assert!(l[&format!("3@{b3}")].starts_with(&format!("merge #0..#{b3}.")));
+}
+
+#[test]
+fn an_open_exchange_gets_its_finished_chunks() {
+    let r = Repo::new();
+    let mut s = Script::new();
+    s.user("survey the code");
+    let last = s.steps(30);
+    let t = r.thread(&s);
+    let tree = t.snapshot().unwrap().tree().unwrap();
+    let roll = Rollup::new(&tree);
+    let b = roll.branch(&tree, *tree.tips().last().unwrap());
+    let keys = b.chunk_keys(&b.parts[0]);
+    assert_eq!(keys.len(), 2, "two full chunks; the third may grow");
+    assert!(keys[1].last < last);
+    let fake = Fake::new();
+    assert_eq!(napped(&t, &fake).calls, 2);
+    assert_eq!(lines(&t).into_keys().collect::<Vec<_>>(), keys);
+}
+
+#[test]
+fn build_makes_the_lines_asked_and_what_they_need() {
+    let r = Repo::new();
+    let mut s = Script::new();
+    let e0 = s.exchange(0);
+    let e1 = s.exchange(1);
+    s.user("read every file");
+    let e2 = s.steps(14);
+    s.exchange(3);
+    s.user("open");
+    let t = r.thread(&s);
+    let fake = Fake::new();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let b = build(&t, fake.backend(), &[key(2, e1), key(1, e2)], deadline).unwrap();
+    assert_eq!((b.lines, b.calls), (6, 6));
+    let got: Vec<String> = texts(&t).into_keys().collect();
+    assert_eq!(got.len(), 6, "{got:?}");
+    for k in [key(1, e0), key(1, e1), key(2, e1), key(1, e2)] {
+        assert!(got.contains(&k.to_string()), "{k}");
+    }
+    let err = build(&t, fake.backend(), &[key(1, e0 + 1)], deadline).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        format!("1@{} is no line of thread t.", e0 + 1)
+    );
+}
+
+#[test]
+fn build_returns_at_its_deadline() {
+    let r = Repo::new();
+    let mut s = Script::new();
+    let e0 = s.exchange(0);
+    s.user("hi");
+    let e1 = s.ai("hello");
+    s.user("open");
+    let t = r.thread(&s);
+    let slow = Fake::with(Duration::from_secs(3), |_| false);
+    let at = Instant::now();
+    let b = build(
+        &t,
+        slow.backend(),
+        &[key(1, e0), key(1, e1)],
+        at + Duration::from_millis(200),
+    )
+    .unwrap();
+    assert!(at.elapsed() < Duration::from_secs(2), "{:?}", at.elapsed());
+    assert_eq!((b.lines, b.calls), (1, 0), "the free line only");
+    assert_eq!(slow.calls(), 1);
+    assert!(
+        slow.stopped.load(Ordering::SeqCst),
+        "the running call is stopped"
+    );
+    assert_eq!(lines(&t).into_keys().collect::<Vec<_>>(), [key(1, e1)]);
+}
+
+#[test]
+fn a_held_lock_makes_a_second_nap_exit_at_once() {
+    let r = Repo::new();
+    let mut s = Script::new();
+    s.exchange(0);
+    s.user("open");
+    let t = r.thread(&s);
+    let fake = Fake::new();
+    let lock = t.try_lock().unwrap().expect("free");
+    assert_eq!(nap(&t, fake.backend()).unwrap(), None);
+    assert_eq!(fake.calls(), 0);
+    let other = r.chat().thread("t").unwrap();
+    assert!(other.try_lock().unwrap().is_none());
+    lock.unlock().unwrap();
+    assert_eq!(napped(&t, &fake).calls, 1);
+    let log = fs::read_to_string(t.log_path().unwrap()).unwrap();
+    assert!(
+        log.contains("busy") && log.contains("built") && log.contains(" end"),
+        "{log}"
+    );
+}
+
+#[test]
+fn failed_lines_stay_unbuilt_and_a_failing_model_stops_the_nap() {
+    let r = Repo::new();
+    let mut s = Script::new();
+    let e0 = s.exchange(0);
+    s.user("poison");
+    let e1 = s.ai(&"p".repeat(600));
+    let e2 = s.exchange(2);
+    s.user("open");
+    let t = r.thread(&s);
+    let fake = Fake::with(Duration::from_millis(2), |t| t.contains("poison"));
+    let b = napped(&t, &fake);
+    assert_eq!(b.failed.len(), 1);
+    assert_eq!(b.failed[0].0, key(1, e1));
+    assert!(b.failed[0].1.contains("fake failure"));
+    assert_eq!(
+        lines(&t).into_keys().collect::<Vec<_>>(),
+        [key(1, e0), key(1, e2)],
+        "the node over the failed line waits"
+    );
+
+    let r = Repo::new();
+    let mut s = Script::new();
+    for k in 0..5 * JOBS {
+        s.exchange(k);
+    }
+    s.user("open");
+    let t = r.thread(&s);
+    let dead = Fake::with(Duration::from_millis(2), |_| true);
+    let b = napped(&t, &dead);
+    assert_eq!((b.lines, b.failed.len()), (0, dead.calls()));
+    assert!(
+        (JOBS..2 * JOBS).contains(&dead.calls()),
+        "a wave of failures stops it: {} calls",
+        dead.calls()
+    );
+}
+
+#[test]
+fn config_sets_the_model_and_switches_the_nap_off() {
+    let r = Repo::new();
+    let chat = r.chat();
+    let c = chat.config().unwrap();
+    assert_eq!((c.model, c.nap), (claude::model(), true));
+    r.git(&["config", "ai.chat.model", "haiku"]);
+    r.git(&["config", "ai.chat.nap", "false"]);
+    let chat = r.chat();
+    let c = chat.config().unwrap();
+    assert_eq!((c.model.as_str(), c.nap), ("haiku", false));
+    let mut s = Script::new();
+    s.user("hi");
+    let t = r.thread(&s);
+    assert!(!chat.spawn_nap(&t).unwrap(), "switched off: nothing starts");
+    r.git(&["config", "ai.chat.nap", "maybe"]);
+    let err = r.chat().config().unwrap_err();
+    assert!(
+        format!("{err:#}").contains("ai.chat.nap is true or false"),
+        "{err:#}"
+    );
+}
