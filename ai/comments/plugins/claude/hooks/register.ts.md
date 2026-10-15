@@ -2,7 +2,7 @@
 
 The Claude Code side of `ai chat` (design: `ai/research/20261014T002322---chat-design.md`; mod findings: `20261014T202206---chat-launch-attach.md`). Claude Code 2.1.300; the mods API is early access.
 
-- Load per process: `claude --plugin-dir plugins/claude`, or for every session `CLAUDE_CODE_PLUGIN_DIRS=<abs path>` (environment, or `env` in `~/.claude/settings.json`). `ai` is resolved from the session's `PATH`.
+- Load per process: `claude --plugin-dir plugins/claude`, or for every session `CLAUDE_CODE_PLUGIN_DIRS=<abs path>` (process environment, or `env` in `~/.claude/settings.json`; never a project's settings). The flake installs it at `$out/share/ai/plugins/claude`; with `nix profile`, `~/.nix-profile/share/ai/plugins/claude`. `ai` is resolved from the session's `PATH`.
 - Plugin name `ai`: the command is `/ai`, the tool `mcp__ai__compress`, the state key `ai.transcript`.
 - `/ai <sub>` is one command: `command.run` hands the rest of the line as `e.args`, so no `/ai-compress` fallback is needed.
 - Transcript path: `$` has the session id but not the transcript path. `classic.SessionStart` (startup, resume, clear, compact) carries it; it goes to `$.state`, which outlives a module reload. `classic.Stop` carries both, so sync reads them from `e`.
@@ -16,5 +16,5 @@ The Claude Code side of `ai chat` (design: `ai/research/20261014T002322---chat-d
 - The agent tool probes with `ai chat sync`: exit 3 means unattached (nothing queued); exit 0 also ingests before the compaction. It is left deferred (behind ToolSearch) so unattached sessions carry no schema.
 - Turn-end sync is a mod `classic.Stop` hook, not a `hooks.json` command hook: it has the session id and transcript path without parsing stdin. It returns at once; the sync runs on the timer.
 - `$.process.run` reads the whole output until the child exits: `ai chat sync` must detach `nap` from its stdout and stderr, or it holds the call. Its timeout is 30 s by default; `compact` and `attach` get the 10-minute maximum.
-- An interactive `--plugin-dir` session writes the engine's type declarations into `.claude-plugin/types/`; `.gitignore` keeps them out.
+- An interactive `--plugin-dir` session writes the engine's type declarations into `.claude-plugin/types/` and a `tsconfig.json` beside `hooks/`; `.gitignore` keeps both out. With them laid, `tsc -p plugins/claude` type-checks the module and tests.
 - Tests (`claude plugin test plugins/claude`) stub `process.run` and the clock beneath the plugin; they need no model and no `ai`.

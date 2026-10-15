@@ -32,6 +32,10 @@
               ];
             };
             cargoLock.lockFile = ./Cargo.lock;
+            postInstall = ''
+              mkdir -p $out/share/ai/plugins
+              cp -r --no-preserve=mode ${./plugins/claude} $out/share/ai/plugins/claude
+            '';
             nativeCheckInputs = [ pkgs.git ];
             nativeInstallCheckInputs = [ pkgs.versionCheckHook ];
             doInstallCheck = true;

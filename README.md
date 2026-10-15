@@ -4,6 +4,7 @@ The `ai` CLI: an all-in-one AI tool.
 
 - `ai memory`: permanent memory for AI agents. An agent records what it learns as one-line notes. Claude Code folds older notes into summaries, and `ai memory wake` prints the whole memory as one short view.
 - `ai notes`: a global knowledge store for AI agents. Each note is one claim, filed in a tree of topics; Claude Code summarises every topic from its children, so an agent can browse the tree or search it.
+- `ai chat`: named conversations that outlive harness sessions. A thread copies its Claude Code sessions into the repository's git, summarises them into a zoomable tree, and replaces the session's compaction with a view of the whole thread.
 
 ## Install
 
@@ -41,6 +42,24 @@ ai notes link <id> <id>         # link one note to another
 ```
 
 Notes are Markdown files in a git repository at `~/.ai/notes`, or at `$AI_NOTES_DIR` if you set it. Every change is a commit.
+
+### ai chat
+
+```sh
+ai chat claude dev [-- claude args]  # Claude Code in a new session of thread dev; an existing thread's view is its context
+ai chat resume dev [-- claude args]  # continue dev's newest session
+ai chat resume                       # list the threads here
+```
+
+Inside a session, `/ai attach <name>`, `/ai detach` and `/ai compress`; the agent reads its thread with `ai chat resume` and `ai chat zoom <id>`. An attached session's `/compact` and auto-compaction replace its context with the thread's view, not Claude Code's summary. Threads live under `refs/ai/chat/` in the repository; `git config ai.chat.model` picks the summariser's model.
+
+This needs the Claude Code plugin in `share/ai/plugins/claude` of the package (`plugins/claude` here). Load it in every session with the `env` block of `~/.claude/settings.json`:
+
+```json
+"env": { "CLAUDE_CODE_PLUGIN_DIRS": "/home/<you>/.nix-profile/share/ai/plugins/claude" }
+```
+
+or for one session with `claude --plugin-dir <dir>`.
 
 ## Credits
 

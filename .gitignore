@@ -18,3 +18,4 @@ devenv.local.yaml
 # Claude Code
 /.claude/
 /plugins/claude/.claude-plugin/types/
+/plugins/claude/tsconfig.json
