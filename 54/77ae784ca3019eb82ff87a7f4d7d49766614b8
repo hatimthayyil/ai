@@ -1,0 +1,40 @@
+ai/comments/tests/chat_cli.rs.md
+  s_77b04d9838f161::t_ede69bd34bd5ae 13
+src/chat/cli.rs
+  s_77b04d9838f161::t_ede69bd34bd5ae 395-396,408-410
+plugins/claude/tests/ai.test.ts
+  s_77b04d9838f161::t_66d3b4fc819407 9
+  s_77b04d9838f161::t_854a7ebca6ba7e 51-54,57,64-92,94-96
+  s_77b04d9838f161::t_de0f394a45e612 93
+  s_77b04d9838f161::t_25f6c21c2589b6 124,131
+  s_77b04d9838f161::t_da672f6ee43dea 29
+  s_77b04d9838f161::t_bd29c4b21c6f1a 97
+tests/chat_cli.rs
+  s_77b04d9838f161::t_ede69bd34bd5ae 491,511-519
+  s_77b04d9838f161::t_ab157af5a8011f 520
+ai/glossary.md
+  s_77b04d9838f161::t_e65eaf56ecb6f9 54
+plugins/claude/hooks/register.ts
+  s_77b04d9838f161::t_89ac8b83e15a50 27-35
+  s_77b04d9838f161::t_6541cc1ac41610 64-68,73-75
+ai/comments/plugins/claude/hooks/register.ts.md
+  s_77b04d9838f161::t_8e9712694d9ff3 9-11
+ai/comments/src/chat/cli.rs.md
+  s_77b04d9838f161::t_ede69bd34bd5ae 11,22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5477ae784ca3019eb82ff87a7f4d7d49766614b8",
+  "prompts": {},
+  "sessions": {
+    "s_77b04d9838f161": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "799603ff-89ac-4e8a-9cfb-a9648c74f1fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Hatim Thayyil <hatim@thayyil.net>"
+    }
+  }
+}
