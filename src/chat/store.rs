@@ -143,6 +143,10 @@ impl Chat {
         Ok(Some(Chat { repo }))
     }
 
+    pub(super) fn repo(&self) -> &gix::Repository {
+        &self.repo
+    }
+
     /// The thread `name`; it exists once something is attached to it.
     pub fn thread(&self, name: &str) -> Result<Thread> {
         check_name(name)?;
@@ -230,33 +234,57 @@ impl Thread {
 
     /// The compactor's lock on this thread; `None` while another process holds it.
     pub fn try_lock(&self) -> Result<Option<File>> {
-        let dir = self.lock.parent().expect("a lock in a dir");
-        fs::create_dir_all(dir).at(dir)?;
+        self.dir()?;
         file::try_lock(&self.lock)
+    }
+
+    /// The compactor's log, beside its lock; its directory is made if absent.
+    pub fn log_path(&self) -> Result<PathBuf> {
+        self.dir()?;
+        Ok(self.lock.with_extension("log"))
+    }
+
+    fn dir(&self) -> Result<()> {
+        let dir = self.lock.parent().expect("a lock in a dir");
+        fs::create_dir_all(dir).at(dir)
     }
 
     /// Writes the line `key` unless it is built; returns the line stored.
     pub fn put_line(&self, key: Key, kind: LineKind, who: &Who, text: &str) -> Result<Line> {
-        let msg = format!("line {key}");
-        let (line, _) = self.mutate(&msg, |s| {
-            if let Some(l) = s.line(key)? {
-                return Ok((l, Changes::default()));
-            }
+        let line = Line {
+            ts: Timestamp::now(),
+            kind,
+            who: who.clone(),
+            text: text.into(),
+        };
+        let mut stored = self.put_lines(vec![(key, line)])?;
+        Ok(stored.remove(0))
+    }
+
+    /// Writes the lines not built yet, in one commit; returns the line stored under each key.
+    pub fn put_lines(&self, lines: Vec<(Key, Line)>) -> Result<Vec<Line>> {
+        let msg = match &lines[..] {
+            [(key, _)] => format!("line {key}"),
+            _ => format!("{} lines", lines.len()),
+        };
+        let (stored, _) = self.mutate(&msg, |s| {
             let n = s.len()?;
-            if key.last >= n {
-                bail!("Line {key} is beyond the thread: it holds {n} items.");
-            }
-            let line = Line {
-                ts: Timestamp::now(),
-                kind,
-                who: who.clone(),
-                text: text.into(),
-            };
             let mut ch = Changes::default();
-            ch.put(line_path(key), line.encode());
-            Ok((line, ch))
+            let mut stored = Vec::with_capacity(lines.len());
+            for (key, line) in &lines {
+                if let Some(l) = s.line(*key)? {
+                    stored.push(l);
+                    continue;
+                }
+                if key.last >= n {
+                    bail!("Line {key} is beyond the thread: it holds {n} items.");
+                }
+                ch.put(line_path(*key), line.encode());
+                stored.push(line.clone());
+            }
+            Ok((stored, ch))
         })?;
-        Ok(line)
+        Ok(stored)
     }
 }
 
@@ -436,6 +464,25 @@ impl Snapshot<'_> {
         Line::decode(&b)
             .map(Some)
             .with_context(|| format!("Line {key} is corrupt"))
+    }
+
+    /// Every line, by key.
+    pub fn all_lines(&self) -> Result<BTreeMap<Key, Line>> {
+        let mut out = BTreeMap::new();
+        for (name, _) in self.git.names(LINES)? {
+            let level = name
+                .parse()
+                .with_context(|| format!("A line level is misnamed: {name}."))?;
+            for (last, line) in self.lines(level)? {
+                out.insert(Key { level, last }, line);
+            }
+        }
+        Ok(out)
+    }
+
+    /// The commit this snapshot reads; none for a thread that does not exist.
+    pub fn commit(&self) -> Option<ObjectId> {
+        self.git.commit()
     }
 
     /// Every line of `level`, by the last item it covers.

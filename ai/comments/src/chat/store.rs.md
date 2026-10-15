@@ -5,7 +5,7 @@ Design: `ai/research/20261014T002322---chat-design.md` (Threads and sessions, Da
 Where
 - One ref per thread, `refs/ai/chat/<name>`, in the repository found from a directory (`gix::discover`). Refs other than `HEAD` live in the common git dir, so every worktree of a repository sees the same threads; nothing pushes them unless asked. The committer is the user's git identity, else `ai chat <ai@localhost>`.
 - Names: letters, digits, `-`, `_`, starting with a letter or digit: a safe ref component and lock file name. Harness, session and agent ids become tree path names: letters, digits, `.`, `_`, `-`, not starting with `.` (record.rs, `check_id`).
-- Compactor lock per thread: `<common git dir>/ai/chat/<name>.lock` (`file::try_lock`), outside `refs/` so git never mistakes it for a ref lock.
+- Compactor lock per thread: `<common git dir>/ai/chat/<name>.lock` (`file::try_lock`), outside `refs/` so git never mistakes it for a ref lock. The compactor's log beside it, `<name>.log` (`log_path`; both make the directory).
 
 Layout of a thread's tree (format 1)
 - `format`: `1`, written by the first commit (`Ref::mutate`); a newer thread is refused before any write ("This thread is format N; this ai reads up to 1. Upgrade ai.").
@@ -30,7 +30,9 @@ Items
 - Subagents: each `Subagent` from the adapter goes to its own sequence, deduped the same way; `call` is found by the Agent tool call id among the session's items. The agent record is rewritten only when it changes (a call found later).
 
 Lines
-- `put_line`: first write wins and returns the stored line; a key past the last item is refused. Kind (`chunk`, `exchange`, `node`) and who wrote it (`memory::Who`: agent, model, session) are stored with the text; the level numbering is the roll-up's.
+- `put_line`: first write wins and returns the stored line; a key past the last item is refused. Kind (`chunk`, `exchange`, `node`) and who wrote it (`memory::Who`: agent, model, session) are stored with the text; the level numbering is the roll-up's (rollup.rs.md).
+- `put_lines`: the same for many lines in one commit (`line <key>` for one, `<n> lines` for more): the compactor writes each round of free lines at once, so a first nap over a long history does not make a commit per short exchange.
+- `all_lines`: every line by key, one walk per level directory; the compactor reads it once per pass.
 
 Queries
 - `Chat::list`: per thread its newest item (harness, session, time) and tips, from the index only. `Snapshot::tree` and `model::Tree::path`/`branch` give the item tree and the path to a tip; `Snapshot::tip(harness, session)` the newest tip of a session; `Snapshot::line`/`lines` lines by key and by level.
