@@ -401,8 +401,8 @@ fn compact_session_syncs_and_prints_the_view() {
     let o = s.ai(&["compact-session", "--harness", "claude", "--session", "s-1"]);
     assert_eq!((code(&o), stderr(&o).as_str()), (0, ""));
     let view = stdout(&o);
-    assert!(view.starts_with("# Thread `dev`\n\nThis is your memory of the thread `dev`"));
-    assert!(view.contains("`ai chat zoom a-b`"));
+    assert!(view.starts_with("# Thread `dev`\n\nThis is the thread `dev`"));
+    assert!(view.contains("`ai chat zoom 8+4`"));
     let ends = turn_ends(&s, "dev");
     assert_eq!(
         ends.len(),
@@ -411,19 +411,21 @@ fn compact_session_syncs_and_prints_the_view() {
     );
     let fold = section(&view, "Earlier turns, summarized");
     assert_eq!(fold.len(), 3);
-    assert!(fold[0].ends_with("|user asked to run the tests; two failed"));
+    assert_eq!(fold[0], "0|user asked to run the tests; two failed");
     assert!(
-        fold[1].starts_with("4-10|4|user: Skip the network tests. 5|ai: "),
-        "compact-session built the short turn as its own line: {fold:#?}"
+        fold[1].starts_with(
+            "1|user: Skip the network tests. ai: Skipping the network tests. tool Bash: "
+        ),
+        "compact-session built the short turn as its own line, without ids: {fold:#?}"
     );
-    assert!(fold[2].starts_with("11-13|11|user: Don't commit yet."));
+    assert!(fold[2].starts_with("2|user: Don't commit yet. tool Bash: "));
     let rail = section(&view, "The user's latest messages");
     assert!(
         rail.iter()
-            .any(|l| l.ends_with("|user: Skip the network tests."))
+            .any(|l| l == &"1.0|user: Skip the network tests.")
     );
     let open = section(&view, "The turn in progress");
-    assert!(open[0].starts_with(&format!("{}|user: ", ends[2] + 1)));
+    assert!(open[0].starts_with("3.0|user: "));
     assert!(view.len() <= VIEW);
 }
 
@@ -546,7 +548,9 @@ fn view_syncs_its_session_and_writes_the_lines_it_needs() {
         "outside the session, nothing is synced: {outside}"
     );
     assert_eq!(lines(&s), 1, "the closed turn's line is written");
-    assert!(section(&outside, "Earlier turns, summarized")[0].starts_with("0-1|0|user: "));
+    assert!(
+        section(&outside, "Earlier turns, summarized")[0].starts_with("0|user: question 0 ai: ")
+    );
 
     let inside = stdout(&s.ai_in("s-1", &["view"]));
     assert!(
@@ -576,33 +580,44 @@ fn zoom_opens_lines_and_items() {
     s.line("dev", 1, 1, "first");
     s.line("dev", 1, 3, "second");
     s.line("dev", 2, 3, "first two");
-    ok(s.ai_in("s-1", &["zoom", "0-3"]), "0-1|first\n2-3|second\n");
+    ok(s.ai_in("s-1", &["zoom", "0+2"]), "0|first\n1|second\n");
+    ok(s.ai(&["zoom", "-t", "dev", "0+2"]), "0|first\n1|second\n");
     ok(
-        s.ai(&["zoom", "-t", "dev", "0-3"]),
-        "0-1|first\n2-3|second\n",
+        s.ai_in("s-1", &["zoom", "0+4"]),
+        "0|first\n1|second\n2|(not summarized yet)\n3|(not summarized yet)\n",
     );
     ok(
-        s.ai_in("s-1", &["zoom", "0-7"]),
-        "0-3|first two\n4-7|(not summarized yet: zoom 4-7)\n",
+        s.ai_in("s-1", &["zoom", "1+3"]),
+        "1|second\n2+2|(not summarized yet)\n",
     );
     ok(
-        s.ai_in("s-1", &["zoom", "4-5"]),
-        "4|user: question 2\n5|ai: reply 2\n",
+        s.ai_in("s-1", &["zoom", "2"]),
+        "2.0|user: question 2\n2.1|ai: reply 2\n",
     );
-    ok(s.ai_in("s-1", &["zoom", "5"]), "5|ai: reply 2\n");
-    let o = s.ai_in("s-1", &["zoom", "8"]);
+    ok(
+        s.ai_in("s-1", &["zoom", "2", "--tool-output"]),
+        "2.0|user: question 2\n2.1|ai: reply 2\n",
+    );
+    ok(s.ai_in("s-1", &["zoom", "2.1"]), "2.1|ai: reply 2\n");
+    let o = s.ai_in("s-1", &["zoom", "4.0"]);
     let out = stdout(&o);
-    assert!(out.ends_with("\nPart 1 of 2. Next: ai chat zoom -t dev 8 2\n"));
-    let rest = stdout(&s.ai(&["zoom", "-t", "dev", "8", "2"]));
+    assert!(out.ends_with("\nPart 1 of 2. Next: ai chat zoom -t dev 4.0 2\n"));
+    let rest = stdout(&s.ai(&["zoom", "-t", "dev", "4.0", "2"]));
     let whole = out.rsplit_once("\nPart 1").unwrap().0.to_string() + &rest;
-    assert_eq!(whole, format!("8|user: {}\n", "paste ".repeat(5_000)));
+    assert_eq!(
+        whole,
+        format!("4.0|user: {}\n", "paste ".repeat(5_000).trim_end())
+    );
+    let o = s.ai_in("s-1", &["zoom", "4", "--tool-output"]);
+    assert!(stdout(&o).ends_with("\nPart 1 of 2. Next: ai chat zoom -t dev 4 2 --tool-output\n"));
     for (id, err) in [
         (
             "x",
-            "'x' is not a line id. Copy one from the view, like 120-245 or 7.\n",
+            "'x' is not an id. Ids look like 12 (a turn), 8+4 (turns 8 to 11) or 12.3 (an item).\n",
         ),
-        ("0-5", "No line 0-5.\n"),
-        ("9", "No line 9.\n"),
+        ("0+8", "This branch has no 0+8.\n"),
+        ("5", "This branch has no 5.\n"),
+        ("2.2", "This branch has no 2.2.\n"),
     ] {
         fails(s.ai_in("s-1", &["zoom", id]), err);
     }
@@ -657,7 +672,7 @@ fn start_binds_a_new_session_and_starts_claude() {
     assert!(
         section(&seed, "The turn in progress")
             .last()
-            .is_some_and(|l| l.starts_with("3|")),
+            .is_some_and(|l| l.starts_with("1.1|")),
         "a new session's view ends at its graft: {seed}"
     );
 
@@ -757,16 +772,16 @@ fn threads_resolve_in_the_current_repository_only() {
     let list = |dir: &Path| stdout(&s.cmd(dir).arg("list").output().unwrap());
     assert!(list(&s.repo()).contains("  s-1  ") && !list(&s.repo()).contains("s-2"));
     assert!(list(&other).contains("  s-2  ") && !list(&other).contains("s-1"));
-    let here = stdout(&s.ai(&["zoom", "-t", "dev", "0"]));
+    let here = stdout(&s.ai(&["zoom", "-t", "dev", "0.0"]));
     let there = stdout(
         &s.cmd(&other)
-            .args(["zoom", "-t", "dev", "0"])
+            .args(["zoom", "-t", "dev", "0.0"])
             .output()
             .unwrap(),
     );
     assert_eq!(
         (here.as_str(), there.as_str()),
-        ("0|user: here 0\n", "0|user: there 0\n")
+        ("0.0|user: here 0\n", "0.0|user: there 0\n")
     );
     let o = s.cmd(&other).args(["resume", "dev"]).output().unwrap();
     assert_eq!((code(&o), stderr(&o).as_str()), (0, ""));
@@ -783,7 +798,7 @@ fn summarise_writes_rewrites_and_dry_runs_the_lines() {
         "Attached to dev, a new thread.\n",
     );
     s.line("dev", 1, 1, "first, by hand");
-    let fresh = "0-1|0|user: question 0 1|ai: reply 0\n";
+    let fresh = "0|user: question 0 ai: reply 0\n";
     let o = s.ai_in("s-1", &["summarise", "--dry-run", "--model", "opus"]);
     let dry = stdout(&o);
     assert_eq!((code(&o), stderr(&o).as_str()), (0, ""));
@@ -829,5 +844,5 @@ fn summarise_writes_rewrites_and_dry_runs_the_lines() {
         .line(Key { level: 1, last: 1 })
         .unwrap()
         .unwrap();
-    assert_eq!(format!("0-1|{}\n", line.text), fresh);
+    assert_eq!(format!("0|{}\n", line.text), fresh);
 }

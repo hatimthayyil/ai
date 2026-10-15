@@ -30,7 +30,7 @@
 - `leaf`: one note of the notes: one claim, titled (`# <title>`, ≤ 80 characters, the claim in a few words), body ≤ 1024 bytes, file `<id>---<slug of title>.md`; the id is its UTC Denote timestamp, permanent. Frontmatter: `source`, `confidence` (`verified | reported | speculative | assessment`), `checked`, `decay`, `links`, `supersedes`, `invalid_at`.
 - `scope`, `gist`: the two parts of a topic's `_summary.md`: one line on what lies below, and its key claims. Written by the compactor model from the topic's children; out of date when the hash of that input changes.
 - `breadcrumb`: a topic path as `ai notes grep` prints it: `physics › qm › decoherence`.
-- `item`: one normalised harness entry in `ai chat` (`chat::Item`): a user message, work, assistant text, tool call, tool result or marker, with its source id (harness, session, entry), parent, time and raw line. Thinking is dropped.
+- `item`: one normalised harness entry in `ai chat` (`chat::Item`): a user message, work, assistant text, tool call, tool output or marker, with its source id (harness, session, entry), parent, time and raw line. Thinking is dropped.
 - `marker`: an item that is a harness event, not content: a compaction point, the harness's own summary, an interrupt.
 - `branch`: the items from a root of the item tree to one tip. Rewinds, edits and two sessions on one thread add branches; nothing is removed.
 - `step`: an assistant text, if any, and the tool calls and results after it, up to the next assistant text.
@@ -46,15 +46,16 @@
 - `sync` (chat): ingest an attached session's new entries into its thread in one commit, none if nothing is new; an unattached session is reported as such.
 - `view` (chat): what `ai chat compact-session` and `ai chat view` print for a session, at most `VIEW` = 128,000 bytes: an instruction, the fold, the user rail, the open turn. Computed fresh each time; nothing about it is stored.
 - `fold` (chat): the closed turns of a session's branch in lines, oldest coarsest: from one line per turn, the most due aligned pair merges first, due = (T − last)/2^l, until the lines fit. An unbuilt line shows what is built under it, else a placeholder.
-- `line id` (chat): `a-b`, the items a to b along the branch to b; `n`, item n. What `ai chat zoom` takes.
+- `id` (chat): how a line or item prints, on a branch: `12` turn 12, `8+4` turns 8 to 11 (a node when aligned), `12.3` item 3 of turn 12 (item 0 opens it), `12.3+7` items 3 to 9 of turn 12 (a chunk line). Turns count from 0 along the branch; past a fork, the same id names a different turn on each branch. What `ai chat zoom` takes. Store keys stay `level@last`.
+- `place` (chat): an item's turn and number in it, from its branch (`model::Place`); fixed by the path from the root, so the same on every branch through the item.
 - `user rail`: the newest user messages of closed turns, word for word, about 8 KB, after the fold.
 - `open turn`: a branch's last turn, not yet closed; the view shows its message, chunk lines and newest steps raw (`OPEN` = 32,000 bytes).
-- `placeholder` (chat): `a-b|(not summarized yet: zoom a-b)`, a line the roll-up has not built; `(not shown: zoom a-b)`, the steps of the open turn left out for room.
+- `placeholder` (chat): `8+4|(not summarized yet)`, a line the roll-up has not built; `12.3+7|(not shown)`, the steps of the open turn left out for room.
 - `launcher`: `ai chat start <name> [-- args]`: a new session id bound to the thread with its future transcript, then `exec claude --session-id`.
 - `seed` (chat): the view a launched session of an existing thread starts with, its only context: the plugin's `SessionStart` (`startup`) context, from `ai chat compact-session`. Kept in the transcript, so a resume replays it; a compaction replaces it.
 - `roll-up`: a thread's lines and what each is made from (`chat::Rollup`), over every branch: chunk lines (level 0), turn lines of closed turns (1), binary nodes over aligned pairs of closed turns along the branch (1+k). Built by the chat compactor.
 - `chunk`: consecutive steps of a turn whose rendering is over `INPUT` (48 KB), cut greedily at step boundaries (an over-budget step before its tool calls); final once another chunk follows it. Its call reads the turn's message as context.
-- `free line` (chat): a line whose input fits 512 B is that input, flattened, with no model call.
+- `free line` (chat): a line whose input fits 512 B is that input without item ids, flattened, with no model call.
 - `summarise` (chat): `ai chat summarise -t <name>`: the thread's summariser, one per thread (its lock), building every ready line until none is; `sync-session` starts it in the background unless `ai.chat.summarise` is false. `--rebuild` drops every line and writes them again; `--dry-run` prints what it would write and stores nothing; `--model` picks the model for the run.
 - `porcelain`: a command for users and agents (git's term): listed in help, errors worded as what to do.
 - `plumbing`: a command for harness glue, at least two words, hidden from help: `ai chat sync-session`, `ai chat compact-session`, `ai memory prompt-hook`.

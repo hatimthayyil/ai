@@ -47,6 +47,13 @@ pub enum Marker {
     Interrupt,
 }
 
+impl Kind {
+    /// Whether it opens a turn: a message from the user or another agent.
+    pub fn opens(&self) -> bool {
+        matches!(self, Kind::User(_) | Kind::Work { .. })
+    }
+}
+
 /// One normalised source entry.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Item {
@@ -58,11 +65,20 @@ pub struct Item {
     pub raw: String,
 }
 
+/// Where an item sits on the branch from its root: its turn, numbered from 0, and its number
+/// in the turn, 0 for the message that opens it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Place {
+    pub turn: u64,
+    pub item: u64,
+}
+
 /// Items linked by their parents. A parent that is not an earlier item makes its item a root.
 pub struct Tree {
     items: Vec<Item>,
     parents: Vec<Option<usize>>,
     tips: Vec<bool>,
+    places: Vec<Place>,
 }
 
 impl Tree {
@@ -70,11 +86,23 @@ impl Tree {
         let mut at = HashMap::with_capacity(items.len());
         let mut parents = Vec::with_capacity(items.len());
         let mut tips = vec![true; items.len()];
+        let mut places: Vec<Place> = Vec::with_capacity(items.len());
         for (i, item) in items.iter().enumerate() {
             let p = item.parent.as_ref().and_then(|p| at.get(p).copied());
             if let Some(p) = p {
                 tips[p] = false;
             }
+            places.push(match p.map(|p: usize| places[p]) {
+                None => Place { turn: 0, item: 0 },
+                Some(q) if item.kind.opens() => Place {
+                    turn: q.turn + 1,
+                    item: 0,
+                },
+                Some(q) => Place {
+                    turn: q.turn,
+                    item: q.item + 1,
+                },
+            });
             parents.push(p);
             at.insert(&item.id, i);
         }
@@ -82,11 +110,17 @@ impl Tree {
             items,
             parents,
             tips,
+            places,
         }
     }
 
     pub fn items(&self) -> &[Item] {
         &self.items
+    }
+
+    /// Where item `i` sits on its branch.
+    pub fn place(&self, i: usize) -> Place {
+        self.places[i]
     }
 
     /// The items nothing follows, in item order: the last one is the newest item.
@@ -129,7 +163,7 @@ pub struct Turn {
 
 /// The turns along `path`, in order.
 pub fn turns(path: &[&Item]) -> Vec<Turn> {
-    let user = |i: usize| matches!(path[i].kind, Kind::User(_) | Kind::Work { .. });
+    let user = |i: usize| path[i].kind.opens();
     let mut starts: Vec<usize> = (0..path.len()).filter(|&i| user(i)).collect();
     if !path.is_empty() && !user(0) {
         starts.insert(0, 0);
@@ -262,5 +296,46 @@ mod tests {
         );
         assert_eq!(turns(&path[1..7]), [x(0..6, &[(1, 6)], false)]);
         assert_eq!(turns(&[]), []);
+    }
+
+    #[test]
+    fn places_count_turns_along_each_branch() {
+        let tree = Tree::new(items(&[
+            ("t0", "", 't'),
+            ("u1", "t0", 'u'),
+            ("t1", "u1", 't'),
+            ("c1", "t1", 'c'),
+            ("u2", "c1", 'u'),
+            ("u2b", "t1", 'u'),
+            ("t3", "u2b", 't'),
+            ("u9", "", 'u'),
+        ]));
+        let place = |i| {
+            let p = tree.place(i);
+            (p.turn, p.item)
+        };
+        assert_eq!(
+            (0..8).map(place).collect::<Vec<_>>(),
+            [
+                (0, 0),
+                (1, 0),
+                (1, 1),
+                (1, 2),
+                (2, 0),
+                (2, 0),
+                (2, 1),
+                (0, 0)
+            ]
+        );
+        for tip in tree.tips() {
+            let path = tree.path(tip);
+            let branch = tree.branch(tip);
+            for (t, turn) in turns(&path).iter().enumerate() {
+                for p in turn.span.clone() {
+                    let want = (t as u64, (p - turn.span.start) as u64);
+                    assert_eq!(place(branch[p]), want, "tip {tip}, position {p}");
+                }
+            }
+        }
     }
 }

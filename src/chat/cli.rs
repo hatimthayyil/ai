@@ -14,11 +14,12 @@ use gix::ObjectId;
 use crate::{
     chat::{
         claude,
+        id::Id,
         record::Binding,
         store::{Chat, Snapshot, Thread, check_name},
         summarise::{build, dry_run, rebuild, summarise},
         sync::Synced,
-        view::{Branch, Id, zoom},
+        view::Branch,
     },
     file,
     memory::{broken_pipe, page, plural},
@@ -86,16 +87,16 @@ enum Command {
         #[command(flatten)]
         session: Session,
     },
-    #[command(
-        about = "open a line of the view: a-b into the lines it was made from, n for item n."
-    )]
+    #[command(about = "open a line of the view, or any turn, item or range of them.")]
     Zoom {
         #[command(flatten)]
         target: Target,
-        #[arg(help = "a line's id, as printed: 120-245, or 7 for item 7")]
+        #[arg(help = "an id: 12 for turn 12, 8+4 for turns 8 to 11, 12.3 for item 3 of turn 12")]
         id: String,
         #[arg(help = "the part of a long output to show, as printed")]
         part: Option<u64>,
+        #[arg(long, help = "show tool output")]
+        tool_output: bool,
     },
     #[command(about = "write a thread's summary lines that are ready.")]
     Summarise {
@@ -221,9 +222,12 @@ impl Cli {
             }
             Command::Attach { name, session } => attach(cwd, out, &name, session),
             Command::Detach { session } => detach(cwd, out, session),
-            Command::Zoom { target, id, part } => {
-                zoom_cmd(cwd, out, target, &id, part.unwrap_or(1))
-            }
+            Command::Zoom {
+                target,
+                id,
+                part,
+                tool_output,
+            } => zoom(cwd, out, target, &id, part.unwrap_or(1), tool_output),
             Command::Summarise {
                 target,
                 rebuild,
@@ -279,6 +283,14 @@ fn pick(cwd: &Path, t: Target) -> Result<(Chat, Thread, Option<Current>)> {
 fn session_tip(s: &Snapshot, c: &Current) -> Result<Option<u64>> {
     Ok(s.binding(&c.harness, &c.session)?
         .and_then(|b| b.tip.or(b.graft)))
+}
+
+/// The end of the branch a command reads in `s`: session `c`'s, else the thread's newest.
+fn branch_tip(s: &Snapshot, c: Option<&Current>) -> Result<Option<u64>> {
+    match c {
+        Some(c) => session_tip(s, c),
+        None => Ok(s.tips()?.last().copied()),
+    }
 }
 
 /// The view of the branch `tip` picks in snapshot `s`; `None` while that branch holds no item.
@@ -527,10 +539,7 @@ fn view(
     at: Option<&str>,
 ) -> Result<ExitCode> {
     let (chat, t, session) = pick(cwd, target)?;
-    let tip = |s: &Snapshot| match &session {
-        Some(c) => session_tip(s, c),
-        None => Ok(s.tips()?.last().copied()),
-    };
+    let tip = |s: &Snapshot| branch_tip(s, session.as_ref());
     let shown = match at {
         Some(at) => {
             let id = ObjectId::from_hex(at.as_bytes())
@@ -564,26 +573,33 @@ fn view(
     Ok(ExitCode::SUCCESS)
 }
 
-fn zoom_cmd(
+/// What `id` holds on the picked thread's branch (the session's, else the newest), in parts.
+fn zoom(
     cwd: &Path,
     out: &mut dyn Write,
     target: Target,
     id: &str,
     part: u64,
+    tool_output: bool,
 ) -> Result<ExitCode> {
-    let (_, t, _) = pick(cwd, target)?;
+    let (_, t, session) = pick(cwd, target)?;
     let Some(parsed) = Id::parse(id) else {
-        bail!("'{id}' is not a line id. Copy one from the view, like 120-245 or 7.");
+        bail!(
+            "'{id}' is not an id. Ids look like 12 (a turn), 8+4 (turns 8 to 11) or 12.3 (an item)."
+        );
     };
-    let Some(text) = zoom(&t.snapshot()?, parsed)? else {
-        bail!("No line {id}.");
+    let snap = t.snapshot()?;
+    let branch = Branch::load(&snap, branch_tip(&snap, session.as_ref())?)?;
+    let Some(text) = branch.zoom(parsed, tool_output) else {
+        bail!("This branch has no {parsed}.");
     };
     let (text, n) = page(&text, PART, part)?;
     writeln!(out, "{}", text.strip_suffix('\n').unwrap_or(text))?;
     if part < n {
+        let flag = if tool_output { " --tool-output" } else { "" };
         writeln!(
             out,
-            "Part {part} of {n}. Next: ai chat zoom -t {} {parsed} {}",
+            "Part {part} of {n}. Next: ai chat zoom -t {} {parsed} {}{flag}",
             t.name(),
             part + 1
         )?;
@@ -606,11 +622,10 @@ fn summarise_cmd(
     let built = match (dry, again) {
         (true, _) => {
             let d = dry_run(&t, backend, again)?;
+            let tree = t.snapshot()?.tree()?;
             for l in &d.lines {
-                let id = Id {
-                    first: l.first,
-                    last: l.key.last,
-                };
+                let place = |seq: u64| tree.place(seq as usize);
+                let id = Id::line(l.key.level, place(l.first), place(l.key.last));
                 writeln!(out, "{id}|{}", l.text)?;
                 if let Some(was) = &l.was {
                     writeln!(out, "  was: {was}")?;

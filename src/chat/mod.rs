@@ -1,5 +1,6 @@
 pub mod claude;
 mod cli;
+pub mod id;
 pub mod model;
 mod record;
 pub mod render;
@@ -10,7 +11,8 @@ mod sync;
 mod view;
 
 pub use cli::{Cli, NOT_ATTACHED};
-pub use model::{Item, Kind, Marker, SourceId, Tree, Turn, turns};
+pub use id::Id;
+pub use model::{Item, Kind, Marker, Place, SourceId, Tree, Turn, turns};
 pub use record::{Agent, Binding, Head, Key, Line, LineKind};
 pub use rollup::{Branch, Part, Rollup, Source};
 pub use store::{Added, Chat, FORMAT, REFS, Snapshot, Thread, ThreadInfo, Transcript, check_name};

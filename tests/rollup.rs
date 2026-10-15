@@ -13,8 +13,8 @@ use std::{
 
 use ai_tools::{
     chat::{
-        Built, Chat, Key, Line, LineKind, Rollup, Source, Thread, build, dry_run, rebuild, rollup,
-        summarise,
+        Built, Chat, Id, Key, Line, LineKind, Rollup, Source, Thread, build, dry_run, rebuild,
+        rollup, summarise,
     },
     memory::{Backend, Block, Conversation, JOBS, NODE, SCALE, claude},
 };
@@ -141,7 +141,7 @@ impl Repo {
 }
 
 /// A model that answers each call with a 300-byte line naming its verb and the first and last
-/// item number in its input (`n|` items, `#n` in lines), so lines show what they cover and two
+/// id in its input (`t.i|` items, `[t.i]` in lines), so lines show what they cover and two
 /// never merge free.
 struct Fake {
     delay: Duration,
@@ -189,12 +189,12 @@ fn reply(task: &str) -> String {
     .find(|v| task.contains(v.0))
     .expect("a known task")
     .1;
-    let nums: Vec<&str> = Regex::new(r"(?m)^(\d+)\||#(\d+)")
+    let ids: Vec<&str> = Regex::new(r"(?m)^(\d+(?:\.\d+)?(?:\+\d+)?)\||\[(\d+\.\d+)\]")
         .unwrap()
         .captures_iter(input)
         .map(|c| c.get(1).or(c.get(2)).unwrap().as_str())
         .collect();
-    let line = format!("{verb} #{}..#{}", nums[0], nums[nums.len() - 1]);
+    let line = format!("{verb} [{}]..[{}]", ids[0], ids[ids.len() - 1]);
     format!("{line:.<300}")
 }
 
@@ -288,12 +288,12 @@ fn short_turns_and_their_nodes_are_free_lines() {
         l.keys().copied().collect::<Vec<_>>(),
         [key(1, a), key(1, b), key(2, b)]
     );
-    assert_eq!(l[&key(1, a)].text, "0|user: hi 1|ai: Hello.");
+    assert_eq!(l[&key(1, a)].text, "user: hi ai: Hello.");
     assert_eq!(l[&key(1, a)].kind, LineKind::Turn);
     assert_eq!(l[&key(1, a)].who.model, "");
     assert_eq!(
         l[&key(2, b)].text,
-        "0|user: hi 1|ai: Hello. 2|user: thanks 3|ai: Welcome."
+        "user: hi ai: Hello. user: thanks ai: Welcome."
     );
     assert_eq!(l[&key(2, b)].kind, LineKind::Node);
 }
@@ -332,28 +332,25 @@ fn every_level_is_built_and_only_once() {
         })
     );
 
+    let id = |seq: u64| Id::item(tree.place(seq as usize)).to_string();
+    assert_eq!(
+        (id(e1), id(big), id(e2), id(e4)),
+        ("1.1".into(), "2.0".into(), "2.43".into(), "4.1".into())
+    );
     let fake = Fake::new();
     let built = summarised(&t, &fake);
+    let span = |kind: &str, a: u64, b: u64| format!("{kind} [{}]..[{}]", id(a), id(b));
     let want = [
-        (
-            chunks[0].to_string(),
-            format!("part #{}..#{}", big + 1, chunks[0].last),
-        ),
-        (
-            format!("0@{e2}"),
-            format!("part #{}..#{e2}", chunks[0].last + 1),
-        ),
-        (format!("1@{e0}"), format!("turn #0..#{e0}")),
-        (format!("1@{e1}"), format!("turn #{}..#{e1}", e0 + 1)),
-        (format!("1@{e2}"), format!("chunked #{big}..#{e2}")),
-        (format!("1@{e3}"), format!("turn #{}..#{e3}", e2 + 1)),
-        (format!("1@{e4}"), format!("turn #{}..#{e4}", e3 + 1)),
-        (format!("2@{e1}"), format!("merge #0..#{e1}")),
-        (format!("2@{e3}"), format!("merge #{big}..#{e3}")),
-        (
-            format!("3@{e3}"),
-            "merge #0..#".to_string() + &e3.to_string(),
-        ),
+        (chunks[0].to_string(), span("part", big + 1, chunks[0].last)),
+        (format!("0@{e2}"), span("part", chunks[0].last + 1, e2)),
+        (format!("1@{e0}"), span("turn", 0, e0)),
+        (format!("1@{e1}"), span("turn", e0 + 1, e1)),
+        (format!("1@{e2}"), span("chunked", big, e2)),
+        (format!("1@{e3}"), span("turn", e2 + 1, e3)),
+        (format!("1@{e4}"), span("turn", e3 + 1, e4)),
+        (format!("2@{e1}"), span("merge", 0, e1)),
+        (format!("2@{e3}"), span("merge", big, e3)),
+        (format!("3@{e3}"), span("merge", 0, e3)),
     ];
     let got = texts(&t);
     assert_eq!(got.len(), want.len(), "{got:#?}");
@@ -380,21 +377,24 @@ fn every_level_is_built_and_only_once() {
         .iter()
         .filter(|t| t.contains("part of a long"))
         .collect();
-    let context = format!("<context>\n{big}|user: read every file\n</context>");
-    assert!(chunk_tasks.iter().all(|t| t.contains(&context)));
+    let context = "<context>\n2.0|user: read every file\n</context>";
+    assert!(chunk_tasks.iter().all(|t| t.contains(context)));
     assert!(
         chunk_tasks
             .iter()
-            .any(|t| t.contains("call Read: file_path=/src/f0.rs"))
+            .any(|t| t.contains("2.2|tool Read: file_path=/src/f0.rs"))
     );
     let whole = tasks
         .iter()
         .find(|t| t.contains("long turn, given"))
         .unwrap();
-    assert!(whole.contains(&format!(
-        "<input>\n{big}|user: read every file\npart #{}-#",
-        big + 1
-    )));
+    let n = chunks[0].last - big;
+    assert!(
+        whole.contains(&format!(
+            "<input>\n2.0|user: read every file\n2.1+{n}|part [2.1]..[2.{n}]"
+        )),
+        "{whole}"
+    );
     assert!(tasks.iter().all(|t| t.ends_with("</input>")));
 }
 
@@ -468,7 +468,7 @@ fn branches_share_the_lines_of_their_common_prefix() {
     assert_eq!(got, want);
     assert_eq!(fake.calls(), want.len(), "the shared prefix once");
     let l = texts(&t);
-    assert!(l[&format!("3@{b3}")].starts_with(&format!("merge #0..#{b3}.")));
+    assert!(l[&format!("3@{b3}")].starts_with("merge [0.0]..[3.1]."));
 }
 
 #[test]

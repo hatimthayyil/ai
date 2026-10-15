@@ -3,7 +3,7 @@
 Design: `ai/research/20261014T002322---chat-design.md`, Roll-up. Pure: what lines a thread has and what each is made from; summarise.rs builds them. Sizes from `20261014T200729---step-compaction-cost.md`; prompt points from `20261014T002032---chat-rollup-prior-art.md` and OptChat's "Compactions" (`/hatimthayyil/code/optchat/optchat.md`).
 
 Rendering
-- `render`: each item's `render::item_line` and a newline, the line the view prints (render.rs.md): `n|kind: text`. The `n` is the item's sequence number: the prompt asks each finding to cite the item holding its detail as `#n`, so a line points where to zoom. Memory's compactor hides ids because the model copied them; here copying them is the point.
+- `render`: each item's `render::item_line` and a newline, the line the view prints (render.rs.md): `t.i|kind: text`, the id from the item's place (model.rs.md), the same on every branch through it, so each item renders once. The prompt asks each finding to cite the item holding its detail as `[t.i]`, so a line points where to zoom. Memory's compactor hides ids because the model copied them; here copying them is the point.
 - `CUT`: tool inputs and outputs at `CLIP` = 4 KB, messages and replies at 24 KB (half the input, so no single item fills a chunk). Raw items stay whole in the store.
 
 Chunking (`chunk`)
@@ -15,7 +15,7 @@ Lines (`Rollup`)
 - `Rollup::new(tree)`: renders every item once, then for every tip (`Tree::tips`) walks its branch (`branch`): `model::turns` on the path, chunks per turn, `Branch::lines` (turn lines of the closed turns) and `nodes` over them. Lines are merged by key across branches (first wins), so a shared prefix gives one record. Subagent items are not rolled up.
 - `Source`: `Chunk` (items, message as context), `Turn` (all its items), `Chunked` (message plus chunk lines: the turn line of a turn that has chunks), `Node` (two lines). `children` are the lines it needs.
 - `nodes`: aligned pairs from the first closed turn of the path, level + 1, keyed by the right half's last item. A node over turn lines is level 2; position 0 is the first turn from the root, whichever session it came from.
-- `free`: a line whose input fits `NODE` (512 B) is that input flattened: no call. Turn and chunk sizes are summed before any string is built, as the compactor asks this for every pending line after each call.
-- `task`: the ruler (memory's 512-byte `SCALE`), the order (`Compress this turn` / `this part of a long turn` / `this long turn, given as its message and the lines of its parts` / `Merge these two adjacent lines`), `<context>` for chunks, `<input>`. Chunk lines in a `Chunked` input are labelled `part #first-#last:`.
+- `free`: a line whose input fits `NODE` (512 B) is that input flattened, items without their ids (`bare`): no call. Ids at the head of a free line read as a line id inside a line (`216-240|216|user: …`). Turn and chunk sizes are summed before any string is built, as the compactor asks this for every pending line after each call.
+- `task`: the ruler (memory's 512-byte `SCALE`), the order (`Compress this turn` / `this part of a long turn` / `this long turn, given as its message and the lines of its parts` / `Merge these two adjacent lines`), `<context>` for chunks, `<input>`. Chunk lines in a `Chunked` input are labelled with their id, `t.i+n|`.
 
 For the view: `rollup::branch(tree, tip)` cuts one branch alone, rendering only its items (`Rollup::branch` reuses the roll-up's renderings); view.rs takes its turns and chunks from it.

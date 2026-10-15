@@ -20,13 +20,13 @@ Reading
 - `list`: per thread its name, turns on the newest branch, UTC minute of the newest item and branch count when more than one; under it every session: harness, id, attached or detached, the time of its newest item (else of its attaching), newest first; the calling session is marked.
 - `fresh_view` is the one way a view is made fresh, for `view` and `compact-session`: read the branch a tip function picks, build the lines its fold needs (`summarise::build`, within `WAIT`, waiting first for a running summariser), read again, render; with the commit read. `view` syncs first when the calling session is attached to the thread it shows (the plumbing's sync, without starting a summariser: the lines it needs it writes itself); outside a session it writes the lines without a sync. The model is the configured one.
 - `view`: the picked thread's view, paged by `PART` (20,000 bytes, under the 30,000-character cap on a Claude Code command's output) with memory's `page`. Every part comes from one commit of the thread: the footer names it and the thread (`-t <name> --part <n> --at <commit>`), because the background summariser writes lines between parts and a fresh fold would shift the page boundaries. A thread with no item yet prints that it holds nothing.
-- `zoom <id> [part]`: `view::zoom`, paged by part number, not pinned: what it shows is mostly items, which never change. The footer names the thread, so it works outside the session too.
+- `zoom <id> [part] [--tool-output]`: `Branch::zoom` on the picked thread's branch (the session's when it is attached there, else the newest: `branch_tip`), paged by part number, not pinned: what it shows is mostly items, which never change. The footer names the thread and repeats `--tool-output`, so it works outside the session too.
 - `attach`/`detach`: one-line confirmations. `attach` reports a new thread and the thread it moved from.
 
 Summarising
 - `summarise`: `summarise::summarise` with `--model`, else the configured model (`Chat::backend`). Prints `Wrote N lines, M by the model.` or `Nothing to write.`, or that another summariser holds the lock (it writes the same lines). Spawned by `sync-session` as `summarise -t <name>`: stdout null, stderr the log.
 - `--rebuild`: `summarise::rebuild`, waiting up to `WAIT` for a running summariser; prints `Dropped N lines; wrote M, K by the model.`
-- `--dry-run` (with or without `--rebuild`): `summarise::dry_run`; prints each line as the view would (`first-last|text`), the line it replaces indented under it as `was:`, then the totals. Stores nothing; still calls the model.
+- `--dry-run` (with or without `--rebuild`): `summarise::dry_run`; prints each line as the view would (`8+4|text`, `12.3+7|text`: `Id::line` from the places of its first and last items), the line it replaces indented under it as `was:`, then the totals. Stores nothing; still calls the model.
 - Failed lines follow the totals (`Failed <key>: <why>`); exit 1 if any failed.
 
 Plumbing

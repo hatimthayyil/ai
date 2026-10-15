@@ -12,19 +12,19 @@ Fold
 - `render`: each planned line if built; else what is built under it (a node's halves, recursively; a turn's message cut to `LINE`, its chunk lines, a placeholder for the rest); else one placeholder naming its id. Fallbacks can outgrow the plan, so while over budget the oldest multi-line fallbacks collapse back to one placeholder each. A placeholder is shorter than the plan's `LINE` estimate, so the collapsed fold always fits.
 
 Ids
-- A line is named by the items it covers, `a-b`, along the branch to `b`; an item by its number, `n`. `b`'s ancestors fix the path, so an id names one range on any branch, needs no session to resolve, and shares its numbers with the items in the view. The level is implied: a whole turn, an aligned power-of-two run of turns, or part of one turn.
-- A turn of one item prints as `n`, like the item, and zooming it shows the item, which is all it holds.
+- Lines and items print by id (id.rs.md): a node `t+n` from its fold coordinate, a turn line `t`, a chunk or `not shown` span `t.i+n` from the place of its first item, an item `t.i`. Ids are read on the session's branch, so zoom loads the session's branch, not the branch to an item.
 
 Chunks
-- A turn's chunks are the roll-up's own cut (`Part::chunks`, every chunk, the open last one included): the view shows the built chunk lines consecutive from the first, each with its exact range, so the compactor may write them in any order. A chunk line after an unbuilt one is left out until the gap is built. On a path cut at a zoomed id's last item the turn there is open, but its last chunk still shows if built: a built chunk line names the same range on any path through it (rollup.rs.md).
+- A turn's chunks are the roll-up's own cut (`Part::chunks`, every chunk, the open last one included): the view shows the built chunk lines consecutive from the first, each with its exact range, so the compactor may write them in any order. A chunk line after an unbuilt one is left out until the gap is built.
 
 Sections and budgets
 - `VIEW` 128,000 bytes in all. The instruction, the user rail (`RAIL` 8,000) and the open turn (`OPEN` 32,000) are rendered first; the fold gets what is left, at least ~86 KB.
 - User rail: the user's messages that open closed turns, newest first while they fit, shown oldest first; the newest always, cut to `RAIL`. The open turn's message is in its own section, so it is not repeated. Work items (other agents) are not the user's words.
-- Open turn: its message (cut to 8,000), then its chunk lines and the steps after the last of them, the newest that fit in `OPEN`, whole steps; a step too big alone splits into items so the newest item always shows. What is left out is one `(not shown: zoom a-b)` line. On auto compaction the prompt that triggered it is this message (register.ts.md).
-- Item lines: `render::item_line`, the one renderer the compactor's input uses too (render.rs.md). In listings, words are cut to 8,000 bytes (fold fallbacks: 512) and tool input or output to 2,000. Zooming an item prints it whole.
-- The instruction tells the agent that `#n` in a summary names item n: the compactor's prompt asks each finding to cite the item holding its detail that way.
+- Open turn: its message (cut to 8,000), then its chunk lines and the steps after the last of them, the newest that fit in `OPEN`, whole steps; a step too big alone splits into items so the newest item always shows. What is left out is one `t.i+n|(not shown)` line. On auto compaction the prompt that triggered it is this message (register.ts.md).
+- Item lines: `render::item_line`, the one renderer the compactor's input uses too (render.rs.md). Fold fallbacks cut words to 512 bytes; the open turn to 8,000, tool input and output to 2,000: it is the agent's working context when an auto compaction lands mid-task, so recent output stays.
+- The instruction says a summary cites the item holding a detail as `[12.3]`, as the compactor's prompt asks.
 
-Zoom
-- One level down: a node into its two halves (with the same fallback as the fold); a whole turn into its message, chunk lines and items; part of a turn (a chunk, or a `not shown` span) into the chunk lines strictly inside it and its other items; an item whole. Memory's two-levels-down zoom does not fit here: under a node over two turns the next level is chunk lines, which most turns lack.
-- `zoom` loads the branch to the id's last item; a single item reads only that item.
+Zoom (`Branch::zoom`)
+- A node opens two levels down, as `ai memory zoom` does: four lines of `n/4` turns; `t+2` its two turn lines (below a turn line are its items, not lines). A turn opens into its message, chunk lines and items; items `t.i+n` into the chunk lines strictly inside them and their other items; one item prints whole. A line not built shows what is built under it, as in the fold.
+- Any range zooms: `5+3` is no node, so it prints the fewest aligned nodes that tile it (`tile`: `5`, `6+2`).
+- Listings print messages and replies whole, each tool call on one line cut to 400 bytes, and tool output as its size only; `--tool-output` prints calls and output whole. Normal use never pulls raw output into the context by accident; it stays one flag away.

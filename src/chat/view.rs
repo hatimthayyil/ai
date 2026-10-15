@@ -1,12 +1,13 @@
-use std::{collections::HashMap, fmt, ops::Range};
+use std::{collections::HashMap, ops::Range};
 
 use anyhow::Result;
 
 use crate::{
     chat::{
+        id::Id,
         model::{Item, Kind, Tree, Turn},
         record::Key,
-        render::{Cut, item_line},
+        render::{Cut, WHOLE, item_line},
         rollup,
         store::Snapshot,
     },
@@ -23,60 +24,33 @@ pub const OPEN: usize = 32_000;
 pub const LINE: usize = 512;
 /// The most of one message's words a listing prints.
 const WORDS: usize = 8_000;
-/// The most of one tool call or result a listing prints.
+/// The most of one tool call or output the open turn prints.
 const TOOL: usize = 2_000;
+/// The most of a tool call's input a zoom lists, on one line.
+const CALL: usize = 400;
 
 const FOLD: &str = "Earlier turns, summarized";
 const USER: &str = "The user's latest messages";
 const CURRENT: &str = "The turn in progress";
 
 const INSTRUCTION: &str = "\
-This is your memory of the thread `{name}`: the conversation so far, oldest first. It stands in \
-for the context you had; its latest word on a thing is the truth.
+This is the thread `{name}`: the conversation so far, oldest first, in place of the context you \
+had. Where two lines disagree, the later one holds.
 
-Each line is `id|text`. An item is one message, tool call or tool result, numbered in the \
-thread. `n|` is item n, cut where it says so. `a-b|` summarizes items a to b; older lines cover \
-more.
+A turn is one message from the user or another agent, and everything you did to answer it. \
+Turns are numbered from 0, and the items of a turn from 0, item 0 being its message. Each line \
+is `id|text`:
+- `12|` summarizes turn 12, and `8+4|` turns 8 to 11.
+- `12.3|` is item 3 of turn 12, and `12.3+7|` summarizes its items 3 to 9.
+An item's text continues on lines indented by two spaces. A summary cites the item that holds \
+a detail in brackets, as [12.3].
 
-Zoom a line before you act on it, guess or ask: `ai chat zoom a-b` opens it into the lines it \
-was made from, down to the items; `ai chat zoom n` prints item n whole. `#n` in a summary names \
-item n, where its detail is. Long output comes in parts: run the command each part ends with.
+To see what a line was made from, zoom it: `ai chat zoom 8+4`. Any turn, item or range of them \
+zooms. A zoom lists tool calls without their output; add `--tool-output` to see it. Long output \
+comes in parts: run the command each part ends with.
 
 Summaries keep little tool output: say in your replies what you learned that will matter later.
 ";
-
-/// What a view line names: the items `first` to `last` along the branch to `last`, or item `n`
-/// alone. Printed `first-last`, or `n`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Id {
-    pub first: u64,
-    pub last: u64,
-}
-
-impl Id {
-    pub fn parse(s: &str) -> Option<Id> {
-        let num = |p: &str| {
-            (!p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
-                .then(|| p.parse().ok())
-                .flatten()
-        };
-        let (a, b) = s.split_once('-').unwrap_or((s, s));
-        let id = Id {
-            first: num(a)?,
-            last: num(b)?,
-        };
-        (id.first <= id.last).then_some(id)
-    }
-}
-
-impl fmt::Display for Id {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.first == self.last {
-            true => write!(f, "{}", self.first),
-            false => write!(f, "{}-{}", self.first, self.last),
-        }
-    }
-}
 
 /// The fold over `t` closed turns: from one line each, merges the most due aligned pair,
 /// due = (t - last)/2^l, oldest first on a tie, until the lines' `cost` fits `budget`.
@@ -103,6 +77,29 @@ pub fn fold(t: u64, budget: usize, cost: impl Fn(Coord) -> usize) -> Vec<Coord> 
         view.splice(k..k + 2, [p]);
     }
     view
+}
+
+/// The nodes `d` levels under `c`, in order.
+fn under(c: Coord, d: u32) -> Vec<Coord> {
+    let l = c.l - d;
+    (c.i << d..(c.i + 1) << d)
+        .map(|i| Coord::new(l, i))
+        .collect()
+}
+
+/// The fewest aligned nodes that tile turns `first` to `end - 1`, in order.
+fn tile(first: u64, end: u64) -> Vec<Coord> {
+    let mut out = Vec::new();
+    let mut at = first;
+    while at < end {
+        let mut l = 0;
+        while at.is_multiple_of(2 << l) && at + (2 << l) <= end {
+            l += 1;
+        }
+        out.push(Coord::new(l, at >> l));
+        at += 1 << l;
+    }
+    out
 }
 
 /// A session's branch of a thread: its items from the root to its tip, cut into turns, with
@@ -161,26 +158,58 @@ impl Branch {
             .collect()
     }
 
-    /// Line `id` opened one level down: a node into its two halves, a turn or part of one
-    /// into its chunk lines and items. `None` if `id` is not a line of this branch, whose tip
-    /// must be `id.last`.
-    pub fn open(&self, id: Id) -> Option<String> {
-        let a = self.path.binary_search(&(id.first as usize)).ok()?;
-        let (ea, eb) = (self.turn_at(a), self.xs.len() - 1);
-        let r = a..self.path.len();
-        let lines = if a != self.xs[ea].span.start || ea == eb {
-            (ea == eb).then(|| self.inside(r))?
-        } else {
-            let n = eb - ea + 1;
-            if !n.is_power_of_two() || !ea.is_multiple_of(n) {
-                return None;
+    /// What `id` holds, one or two levels down: a node into the lines two levels under it
+    /// (`t+2` into its two turn lines), a turn into its chunk lines and items, items into the
+    /// chunk lines inside them and their other items, one item whole; turns that are no node
+    /// into the fewest nodes that tile them. A line not built shows what is built under it.
+    /// Tool output only with `tool_output`. `None` if `id` is not on this branch.
+    pub fn zoom(&self, id: Id, tool_output: bool) -> Option<String> {
+        let listing = match tool_output {
+            true => Cut::WHOLE,
+            false => Cut {
+                words: WHOLE,
+                input: CALL,
+                output: None,
+            },
+        };
+        let lines = match id {
+            Id::Turns { first, n } => {
+                let end = first.checked_add(n)?;
+                if end > self.xs.len() as u64 {
+                    return None;
+                }
+                let nodes = match Coord::at(first, n, end) {
+                    Some(c) if c.l == 0 => {
+                        let span = self.xs[first as usize].span.clone();
+                        return Some(self.inside(span, listing).join("\n"));
+                    }
+                    Some(c) => under(c, c.l.min(2)),
+                    None => tile(first, end),
+                };
+                let mut out = Vec::new();
+                for c in nodes {
+                    self.push(c, &mut out);
+                }
+                out
             }
-            let c = Coord::new(n.trailing_zeros(), (ea / n) as u64);
-            let mut out = Vec::new();
-            for k in c.children() {
-                self.push(k, &mut out);
+            Id::Items { turn, first, n } => {
+                let x = self.xs.get(turn as usize)?;
+                let a = x.span.start.checked_add(first as usize)?;
+                let b = a.checked_add(n as usize)?;
+                if b > x.span.end {
+                    return None;
+                }
+                match n {
+                    1 => vec![self.item_line(
+                        a,
+                        Cut {
+                            output: tool_output.then_some(WHOLE),
+                            ..Cut::WHOLE
+                        },
+                    )],
+                    _ => self.inside(a..b, listing),
+                }
             }
-            out
         };
         Some(lines.join("\n"))
     }
@@ -213,14 +242,13 @@ impl Branch {
         &self.tree.items()[self.path[p]]
     }
 
-    fn seq(&self, p: usize) -> u64 {
-        self.path[p] as u64
-    }
-
-    fn id(&self, r: &Range<usize>) -> Id {
-        Id {
-            first: self.seq(r.start),
-            last: self.seq(r.end - 1),
+    /// The id of the items at positions `r`, all in one turn.
+    fn items_id(&self, r: &Range<usize>) -> Id {
+        let p = self.tree.place(self.path[r.start]);
+        Id::Items {
+            turn: p.turn,
+            first: p.item,
+            n: r.len() as u64,
         }
     }
 
@@ -232,7 +260,7 @@ impl Branch {
     fn key(&self, c: Coord) -> Key {
         Key {
             level: 1 + c.l,
-            last: self.seq(self.span(c).end - 1),
+            last: self.path[self.span(c).end - 1] as u64,
         }
     }
 
@@ -244,15 +272,10 @@ impl Branch {
         self.xs.partition_point(|x| x.span.end <= p)
     }
 
-    /// Whether item `p` opens a turn: a message from the user or another agent.
-    fn opens(&self, p: usize) -> bool {
-        matches!(self.item(p).kind, Kind::User(_) | Kind::Work { .. })
-    }
-
     /// Where turn `e`'s steps start: after its message.
     fn body(&self, e: usize) -> usize {
         let s = self.xs[e].span.start;
-        s + usize::from(self.opens(s))
+        s + usize::from(self.item(s).kind.opens())
     }
 
     /// The chunk lines built in turn `e`, consecutive from its first step, each with the
@@ -263,32 +286,31 @@ impl Branch {
             .map_while(|r| {
                 let key = Key {
                     level: 0,
-                    last: self.seq(r.end - 1),
+                    last: self.path[r.end - 1] as u64,
                 };
                 Some((r.clone(), self.lines.get(&key)?.as_str()))
             })
             .collect()
     }
 
-    /// Item `p` as a line, its words cut to `words` bytes and its tool input or output to
-    /// [`TOOL`]; whole if `None`.
-    fn item_line(&self, p: usize, words: Option<usize>) -> String {
-        item_line(self.seq(p), self.item(p), cut(words))
+    /// Item `p` as a line, cut by `cut`.
+    fn item_line(&self, p: usize, cut: Cut) -> String {
+        let id = Id::item(self.tree.place(self.path[p]));
+        item_line(id, self.item(p), cut)
     }
 
-    fn line(&self, r: &Range<usize>, text: &str) -> String {
-        format!("{}|{}", self.id(r), flat(text))
+    fn line(id: Id, text: &str) -> String {
+        format!("{id}|{}", flat(text))
     }
 
-    fn placeholder(&self, r: &Range<usize>) -> String {
-        let id = self.id(r);
-        format!("{id}|(not summarized yet: zoom {id})")
+    fn placeholder(id: Id) -> String {
+        format!("{id}|(not summarized yet)")
     }
 
     /// The fold with an unbuilt line reckoned at [`LINE`] bytes: the lines the view wants.
     fn plan(&self, budget: usize) -> Vec<Coord> {
         fold(self.closed(), budget, |c| {
-            let id = self.id(&self.span(c)).to_string();
+            let id = Id::node(c).to_string();
             id.len() + 2 + self.text(c).map_or(LINE, |t| flat(t).len())
         })
     }
@@ -311,7 +333,7 @@ impl Branch {
                 break;
             }
             if part.len() > 1 {
-                let one = vec![self.placeholder(&self.span(c))];
+                let one = vec![Branch::placeholder(Id::node(c))];
                 size = size + bytes(&one) - bytes(part);
                 *part = one;
             }
@@ -321,10 +343,9 @@ impl Branch {
 
     /// Line `c`, else the lines built under it, else a placeholder naming it.
     fn push(&self, c: Coord, out: &mut Vec<String>) {
-        let span = self.span(c);
         match self.text(c) {
-            Some(t) => out.push(self.line(&span, t)),
-            None if !self.built_under(c) => out.push(self.placeholder(&span)),
+            Some(t) => out.push(Branch::line(Id::node(c), t)),
+            None if !self.built_under(c) => out.push(Branch::placeholder(Id::node(c))),
             None if c.l > 0 => {
                 for k in c.children() {
                     self.push(k, out);
@@ -332,13 +353,18 @@ impl Branch {
             }
             None => {
                 let e = c.i as usize;
+                let span = self.span(c);
                 let body = self.body(e);
-                out.extend((span.start..body).map(|p| self.item_line(p, Some(LINE))));
+                out.extend((span.start..body).map(|p| self.item_line(p, cut(LINE))));
                 let chunks = self.chunks(e);
-                out.extend(chunks.iter().map(|(r, t)| self.line(r, t)));
+                out.extend(
+                    chunks
+                        .iter()
+                        .map(|(r, t)| Branch::line(self.items_id(r), t)),
+                );
                 let rest = chunks.last().map_or(body, |c| c.0.end)..span.end;
                 if !rest.is_empty() {
-                    out.push(self.placeholder(&rest));
+                    out.push(Branch::placeholder(self.items_id(&rest)));
                 }
             }
         }
@@ -364,7 +390,7 @@ impl Branch {
             if !matches!(self.item(p).kind, Kind::User(_)) {
                 continue;
             }
-            let l = self.item_line(p, Some(RAIL));
+            let l = self.item_line(p, cut(RAIL));
             if !out.is_empty() && size + l.len() + 1 > RAIL {
                 break;
             }
@@ -384,18 +410,18 @@ impl Branch {
         let x = &self.xs[e];
         let body = self.body(e);
         let mut out: Vec<String> = (x.span.start..body)
-            .map(|p| self.item_line(p, Some(WORDS)))
+            .map(|p| self.item_line(p, cut(WORDS)))
             .collect();
         let chunks = self.chunks(e);
         let rest = chunks.last().map_or(body, |c| c.0.end);
         let mut units: Vec<(Range<usize>, Vec<String>)> = chunks
             .iter()
-            .map(|(r, t)| (r.clone(), vec![self.line(r, t)]))
+            .map(|(r, t)| (r.clone(), vec![Branch::line(self.items_id(r), t)]))
             .collect();
         for s in &x.steps {
             let r = s.start.max(rest)..s.end;
             if !r.is_empty() {
-                let lines = r.clone().map(|p| self.item_line(p, Some(WORDS))).collect();
+                let lines = r.clone().map(|p| self.item_line(p, cut(WORDS))).collect();
                 units.push((r, lines));
             }
         }
@@ -423,16 +449,16 @@ impl Branch {
             keep -= 1;
         }
         if keep > 0 {
-            let id = self.id(&(units[0].0.start..units[keep - 1].0.end));
-            out.push(format!("{id}|(not shown: zoom {id})"));
+            let id = self.items_id(&(units[0].0.start..units[keep - 1].0.end));
+            out.push(format!("{id}|(not shown)"));
         }
         out.extend(units.drain(keep..).flat_map(|u| u.1));
         out
     }
 
     /// What `r`, within one turn, holds: the chunk lines inside it other than itself, and
-    /// its other items.
-    fn inside(&self, r: Range<usize>) -> Vec<String> {
+    /// its other items, cut by `cut`.
+    fn inside(&self, r: Range<usize>, cut: Cut) -> Vec<String> {
         let chunks: Vec<_> = self
             .chunks(self.turn_at(r.start))
             .into_iter()
@@ -444,11 +470,11 @@ impl Branch {
         while p < r.end {
             match cs.next_if(|c| c.0.start == p) {
                 Some((c, t)) => {
-                    out.push(self.line(c, t));
+                    out.push(Branch::line(self.items_id(c), t));
                     p = c.end;
                 }
                 None => {
-                    out.push(self.item_line(p, Some(WORDS)));
+                    out.push(self.item_line(p, cut));
                     p += 1;
                 }
             }
@@ -457,25 +483,13 @@ impl Branch {
     }
 }
 
-/// Line `id` of the thread at `s` opened one level down, or item `id` whole; `None` if it names
-/// neither.
-pub fn zoom(s: &Snapshot, id: Id) -> Result<Option<String>> {
-    if id.last >= s.len()? {
-        return Ok(None);
+/// An item's words cut to `words` bytes, and its tool input and output to [`TOOL`].
+fn cut(words: usize) -> Cut {
+    Cut {
+        words,
+        input: words.min(TOOL),
+        output: Some(words.min(TOOL)),
     }
-    if id.first == id.last {
-        return Ok(Some(item_line(id.last, &s.item(id.last)?, None)));
-    }
-    Ok(Branch::load(s, Some(id.last))?.open(id))
-}
-
-/// With `words`, an item's words cut to that many bytes and its tool input or output to
-/// [`TOOL`]; whole if `None`.
-fn cut(words: Option<usize>) -> Option<Cut> {
-    words.map(|w| Cut {
-        words: w,
-        tool: w.min(TOOL),
-    })
 }
 
 /// The bytes `lines` take, one newline each.
@@ -560,20 +574,11 @@ mod tests {
         rest.split("\n\n## ").next().unwrap().lines().collect()
     }
 
-    #[test]
-    fn ids_read_back() {
-        for (s, id) in [("7", (7, 7)), ("120-245", (120, 245)), ("3-3", (3, 3))] {
-            let want = Id {
-                first: id.0,
-                last: id.1,
-            };
-            assert_eq!(Id::parse(s), Some(want), "{s}");
-        }
-        assert_eq!(Id::parse("120-245").unwrap().to_string(), "120-245");
-        assert_eq!(Id::parse("3-3").unwrap().to_string(), "3");
-        for bad in ["", "-", "5-3", "1+2", "a", "1-", "-1", "1-2-3", " 1"] {
-            assert_eq!(Id::parse(bad), None, "{bad}");
-        }
+    fn ids(lines: &[String]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| l.split('|').next().unwrap().to_string())
+            .collect()
     }
 
     #[test]
@@ -598,12 +603,26 @@ mod tests {
     }
 
     #[test]
+    fn ranges_tile_with_the_fewest_nodes() {
+        let names = |v: Vec<Coord>| -> Vec<String> { v.iter().map(|c| c.to_string()).collect() };
+        assert_eq!(names(tile(5, 8)), ["5", "6+2"]);
+        assert_eq!(names(tile(0, 7)), ["0+4", "4+2", "6"]);
+        assert_eq!(names(tile(3, 13)), ["3", "4+4", "8+4", "12"]);
+        assert_eq!(names(tile(8, 16)), ["8+8"]);
+        assert_eq!(
+            names(under(Coord::new(3, 1), 2)),
+            ["8+2", "10+2", "12+2", "14+2"]
+        );
+        assert_eq!(names(under(Coord::new(1, 2), 1)), ["4", "5"]);
+    }
+
+    #[test]
     fn built_lines_fill_the_fold_and_the_rest_fall_back() {
         let b = branch(chain("utututututututut", short), &[]);
         assert_eq!(b.closed(), 7);
         let all = b.render(VIEW);
         assert_eq!(all.len(), 7);
-        assert_eq!(all[0], "0-1|(not summarized yet: zoom 0-1)");
+        assert_eq!(all[0], "0|(not summarized yet)");
         let b = branch(
             chain("utututututututut", short),
             &[
@@ -616,13 +635,13 @@ mod tests {
         assert_eq!(
             b.render(150),
             [
-                "0-3|first two",
-                "4-5|(not summarized yet: zoom 4-5)",
-                "6-7|fourth",
-                "8-11|(not summarized yet: zoom 8-11)",
-                "12-13|(not summarized yet: zoom 12-13)",
+                "0+2|first two",
+                "2|(not summarized yet)",
+                "3|fourth",
+                "4+2|(not summarized yet)",
+                "6|(not summarized yet)",
             ],
-            "0-7 falls back to what is built under it"
+            "0+4 falls back to what is built under it"
         );
         let key = |last| Key { level: 1, last };
         assert_eq!(
@@ -646,18 +665,22 @@ mod tests {
         assert_eq!(
             render(&[(0, 6, "read the config")]),
             [
-                "0|user: m0",
-                "1-6|read the config",
-                "7-9|(not summarized yet: zoom 7-9)",
+                "0.0|user: m0",
+                "0.1+6|read the config",
+                "0.7+3|(not summarized yet)",
             ]
         );
         assert_eq!(
             render(&[(0, 6, "read the config"), (0, 9, "ran the tests")]),
-            ["0|user: m0", "1-6|read the config", "7-9|ran the tests"]
+            [
+                "0.0|user: m0",
+                "0.1+6|read the config",
+                "0.7+3|ran the tests"
+            ]
         );
         assert_eq!(
             render(&[(0, 9, "ran the tests")]),
-            ["0-9|(not summarized yet: zoom 0-9)"],
+            ["0|(not summarized yet)"],
             "chunk lines count from the first"
         );
     }
@@ -679,9 +702,9 @@ mod tests {
         let b = branch(chain(&"ut".repeat(65), short), &as_refs(&lines));
         let fold = b.render(4_000);
         assert!(bytes(&fold) <= 4_000, "{}", bytes(&fold));
-        assert!(fold[0].starts_with("0-") && fold[0].contains("not summarized yet"));
+        assert!(fold[0].starts_with("0+") && fold[0].contains("not summarized yet"));
         assert!(
-            fold.last().unwrap().starts_with("126-127|63 x"),
+            fold.last().unwrap().starts_with("63|63 x"),
             "the newest stay built"
         );
     }
@@ -698,10 +721,10 @@ mod tests {
         ] {
             let v = b.view("dev");
             assert!(v.len() <= VIEW, "{}", v.len());
-            assert!(v.starts_with("# Thread `dev`\n\nThis is your memory of the thread `dev`"));
+            assert!(v.starts_with("# Thread `dev`\n\nThis is the thread `dev`"));
             assert!(section_lines(&v, FOLD).len() > 10);
             assert!(!section_lines(&v, USER).is_empty());
-            assert!(section_lines(&v, CURRENT)[0].starts_with("6000|user: "));
+            assert!(section_lines(&v, CURRENT)[0].starts_with("3000.0|user: "));
         }
         let empty = branch(Vec::new(), &[]).view("dev");
         assert!(empty.ends_with("The thread holds nothing yet.\n"));
@@ -713,25 +736,23 @@ mod tests {
             2 => "run the benchmarks".to_string(),
             _ => format!("{i}:{}", "o".repeat(9_000)),
         };
-        let ids = |lines: &[String]| -> Vec<String> {
-            lines
-                .iter()
-                .map(|l| l.split('|').next().unwrap().to_string())
-                .collect()
-        };
         let open = branch(chain("utuctcrcrcrtcrt", text), &[]).current();
-        assert_eq!(open[0], "2|user: run the benchmarks");
-        assert_eq!(open[1], "3-10|(not shown: zoom 3-10)");
-        assert_eq!(ids(&open[2..]), ["11", "12", "13", "14"], "whole steps");
-        assert!(open[3].starts_with("12|call Bash: ") && open[3].contains("bytes cut: zoom 12"));
+        assert_eq!(open[0], "1.0|user: run the benchmarks");
+        assert_eq!(open[1], "1.1+8|(not shown)");
+        assert_eq!(
+            ids(&open[2..]),
+            ["1.9", "1.10", "1.11", "1.12"],
+            "whole steps"
+        );
+        assert!(open[3].starts_with("1.10|tool Bash: ") && open[3].contains("bytes cut ...]"));
         assert!(bytes(&open) <= OPEN);
 
         let flood = "u".to_string() + &"c".repeat(40) + &"r".repeat(40);
         let open = branch(chain(&flood, text), &[]).current();
         assert!(bytes(&open) <= OPEN, "{}", bytes(&open));
-        assert!(open[1].starts_with("1-") && open[1].contains("not shown"));
+        assert!(open[1].starts_with("0.1+") && open[1].ends_with("|(not shown)"));
         assert!(
-            open.last().unwrap().starts_with("80|result: "),
+            open.last().unwrap().starts_with("0.80|output: "),
             "a step too big for the budget keeps its newest items"
         );
 
@@ -739,8 +760,11 @@ mod tests {
         let text = padded(|i| if i % 3 == 1 { 20_000 } else { 0 });
         let lines = [(0, 6, "read it")];
         let open = branch(chain("utcrtcrtcrtcr", text), &lines).current();
-        assert_eq!(ids(&open), ["0", "1-6", "7", "8", "9", "10", "11", "12"]);
-        assert_eq!(open[1], "1-6|read it");
+        assert_eq!(
+            ids(&open),
+            ["0.0", "0.1+6", "0.7", "0.8", "0.9", "0.10", "0.11", "0.12"]
+        );
+        assert_eq!(open[1], "0.1+6|read it");
     }
 
     #[test]
@@ -751,66 +775,88 @@ mod tests {
         };
         let rail = branch(chain(&"utwt".repeat(20), text), &[]).rail();
         assert_eq!(rail.len(), 5);
-        assert!(rail[0].starts_with("60|user: ask 60"));
-        assert!(rail[4].starts_with("76|user: ask 76"));
+        assert!(rail[0].starts_with("30.0|user: ask 60"));
+        assert!(rail[4].starts_with("38.0|user: ask 76"));
         let huge = |i: usize| format!("{i}{}", "q".repeat(20_000));
         let rail = branch(chain("utu", huge), &[]).rail();
         assert_eq!(rail.len(), 1, "the newest always, cut");
-        assert!(rail[0].len() < RAIL + 100 && rail[0].contains("bytes cut: zoom 0"));
+        assert!(rail[0].len() < RAIL + 100 && rail[0].contains("bytes cut ...]"));
     }
 
     #[test]
-    fn zoom_opens_nodes_turns_and_chunks() {
-        // Turn 4-8 holds two steps of about 28 and 24 KB: over 48 KB, cut 5-7 and 8.
+    fn zoom_opens_nodes_turns_chunks_and_items() {
+        // Turn 2 (items 4-8) holds two steps of about 28 and 24 KB: over 48 KB, cut 5-7 and 8.
         let text = padded(|i| match i {
             5 | 8 => 24_000,
             7 => 10_000,
             _ => 0,
         });
-        let ids = |s: String| -> Vec<String> {
-            s.lines()
-                .map(|l| l.split(['|', ' ']).take(2).collect::<Vec<_>>().join(" "))
-                .collect()
-        };
-        let open = |tip: usize, first: u64| {
-            let mut items = chain("utututcrtutut", &text);
-            items.truncate(tip + 1);
-            let lines = [
+        let b = branch(
+            chain("utututcrtutut", &text),
+            &[
                 (1, 1, "one"),
                 (1, 3, "two"),
                 (2, 3, "one and two"),
                 (0, 7, "ran"),
-            ];
-            branch(items, &lines).open(Id {
-                first,
-                last: tip as u64,
-            })
+            ],
+        );
+        let zoom = |id: &str, out: bool| b.zoom(Id::parse(id).unwrap(), out);
+        let heads = |id: &str| -> Vec<String> {
+            zoom(id, false)
+                .unwrap()
+                .lines()
+                .map(|l| l.chars().take_while(|&c| c != ' ').collect())
+                .collect()
         };
-        assert_eq!(open(3, 0).unwrap(), "0-1|one\n2-3|two");
+        assert_eq!(zoom("0+2", false).unwrap(), "0|one\n1|two");
         assert_eq!(
-            open(10, 0).unwrap(),
-            "0-3|one and two\n4|user: m4\n5-7|ran\n8|(not summarized yet: zoom 8)\n\
-             9-10|(not summarized yet: zoom 9-10)",
-            "a node opens into its halves, an unbuilt half into what is built under it"
+            zoom("0+4", false).unwrap(),
+            "0|one\n1|two\n2.0|user: m4\n2.1+3|ran\n2.4|(not summarized yet)\n\
+             3|(not summarized yet)",
+            "four turn lines; turn 2 is not built, so what is built under it"
         );
         assert_eq!(
-            ids(open(8, 4).unwrap()),
-            ["4 user:", "5-7 ran", "8 ai:"],
+            heads("2"),
+            ["2.0|user:", "2.1+3|ran", "2.4|ai:"],
             "a turn: its message, chunk lines, items"
         );
         assert_eq!(
-            ids(open(7, 5).unwrap()),
-            ["5 ai:", "6 call", "7 result:"],
-            "a chunk: its items"
+            zoom("2.1+3", false).unwrap(),
+            format!(
+                "2.1|ai: {}\n2.2|tool Bash: m6\n2.3|output: (1 line, {} bytes)",
+                text(5),
+                text(7).len()
+            ),
+            "a chunk: its items, the output as its size"
         );
-        assert!(open(7, 5).unwrap().contains("\n6|call Bash: m6\n"));
-        assert_eq!(ids(open(8, 6).unwrap()), ["6 call", "7 result:", "8 ai:"]);
-        assert_eq!(open(5, 0), None, "three turns are no line");
+        assert!(
+            zoom("2.1+3", true)
+                .unwrap()
+                .ends_with(&format!("2.3|output: {}", text(7)))
+        );
         assert_eq!(
-            open(3, 1),
-            None,
-            "it starts in one turn and ends in another"
+            zoom("2.3", false).unwrap(),
+            format!("2.3|output: (1 line, {} bytes)", text(7).len())
         );
-        assert_eq!(open(3, 9), None);
+        assert_eq!(
+            zoom("2.3", true).unwrap(),
+            format!("2.3|output: {}", text(7))
+        );
+        assert_eq!(
+            heads("1+3"),
+            ["1|two", "2.0|user:", "2.1+3|ran", "2.4|(not", "3|(not"]
+        );
+        assert_eq!(heads("4"), ["4.0|user:", "4.1|ai:"], "the open turn");
+        for bad in ["5", "4+2", "0+8", "2.5", "2.3+3", "9.0"] {
+            assert_eq!(zoom(bad, false), None, "{bad}");
+        }
+
+        let lines = [(2, 3, "a"), (2, 7, "b"), (2, 11, "c"), (2, 15, "d")];
+        let b = branch(chain(&"ut".repeat(9), short), &lines);
+        assert_eq!(
+            b.zoom(Id::parse("0+8").unwrap(), false).unwrap(),
+            "0+2|a\n2+2|b\n4+2|c\n6+2|d",
+            "two levels down"
+        );
     }
 }

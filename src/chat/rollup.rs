@@ -2,7 +2,8 @@ use std::{collections::BTreeMap, ops::Range};
 
 use crate::{
     chat::{
-        model::{Item, Kind, Tree, Turn, turns},
+        id::Id,
+        model::{Item, Kind, Place, Tree, Turn, turns},
         record::{Key, LineKind},
         render::{Cut, clip, item_line},
     },
@@ -19,12 +20,19 @@ pub const CLIP: usize = 4 * 1024;
 /// fills a chunk; tool inputs and outputs in [`CLIP`].
 const CUT: Cut = Cut {
     words: INPUT / 2,
-    tool: CLIP,
+    input: CLIP,
+    output: Some(CLIP),
 };
 
-/// Item `seq` as a call reads it: its line, cut by [`CUT`], and a newline.
-pub fn render(seq: u64, item: &Item) -> String {
-    item_line(seq, item, Some(CUT)) + "\n"
+/// The item at `place` as a call reads it: its line, cut by [`CUT`], and a newline.
+pub fn render(place: Place, item: &Item) -> String {
+    item_line(Id::item(place), item, CUT) + "\n"
+}
+
+/// An item as a call reads it, without its id or the indent of its continued lines.
+fn bare(rendered: &str) -> String {
+    let text = rendered.split_once('|').map_or(rendered, |(_, t)| t);
+    text.replace("\n  ", "\n")
 }
 
 /// Cuts `steps`, consecutive ranges of positions, into chunks of at most `budget` bytes,
@@ -219,7 +227,7 @@ pub fn branch(tree: &Tree, tip: usize) -> Branch {
     let seqs = tree.branch(tip);
     let mut size = vec![0; tree.items().len()];
     for &s in &seqs {
-        size[s] = render(s as u64, &tree.items()[s]).len();
+        size[s] = render(tree.place(s), &tree.items()[s]).len();
     }
     cut(tree, seqs, |s| size[s])
 }
@@ -247,17 +255,21 @@ fn cut(tree: &Tree, seqs: Vec<usize>, size: impl Fn(usize) -> usize) -> Branch {
 /// The roll-up of a thread's main tree: every line of every branch, with what it is made from.
 pub struct Rollup {
     texts: Vec<String>,
+    places: Vec<Place>,
     lines: BTreeMap<Key, Source>,
 }
 
 impl Rollup {
     pub fn new(tree: &Tree) -> Rollup {
-        let texts = (0..)
+        let places: Vec<Place> = (0..tree.items().len()).map(|i| tree.place(i)).collect();
+        let texts = places
+            .iter()
             .zip(tree.items())
-            .map(|(seq, item)| render(seq, item))
+            .map(|(&p, item)| render(p, item))
             .collect();
         let mut r = Rollup {
             texts,
+            places,
             lines: BTreeMap::new(),
         };
         for tip in tree.tips() {
@@ -276,8 +288,7 @@ impl Rollup {
         let seqs = |r: &Range<usize>| r.clone().map(|p| b.seqs[p] as u64).collect::<Vec<_>>();
         for p in &b.parts {
             let first = b.seqs[p.turn.span.start];
-            let message = matches!(tree.items()[first].kind, Kind::User(_) | Kind::Work { .. })
-                .then_some(first as u64);
+            let message = tree.items()[first].kind.opens().then_some(first as u64);
             let keys = b.chunk_keys(p);
             for (c, &k) in p.done().iter().zip(&keys) {
                 self.lines.entry(k).or_insert_with(|| Source::Chunk {
@@ -316,6 +327,10 @@ impl Rollup {
         &self.texts[seq as usize]
     }
 
+    fn place(&self, seq: u64) -> Place {
+        self.places[seq as usize]
+    }
+
     /// What line `key` is made from, as a call reads it; `None` until every line it is made
     /// from is `built`.
     fn input<'a>(&self, key: Key, built: impl Fn(Key) -> Option<&'a str>) -> Option<String> {
@@ -330,7 +345,8 @@ impl Rollup {
                         Some(Source::Chunk { items, .. }) => items[0],
                         _ => k.last,
                     };
-                    s += &format!("part #{first}-#{}: {}\n", k.last, built(k)?);
+                    let id = Id::line(0, self.place(first), self.place(k.last));
+                    s += &format!("{id}|{}\n", built(k)?);
                 }
                 s
             }
@@ -341,13 +357,23 @@ impl Rollup {
     /// The text of line `key` when what it is made from fits a line, so it needs no call;
     /// `None` when it needs one, or until every line it is made from is `built`.
     pub fn free<'a>(&self, key: Key, built: impl Fn(Key) -> Option<&'a str>) -> Option<String> {
-        if let Source::Chunk { items, .. } | Source::Turn(items) = self.lines.get(&key)?
-            && items.iter().map(|&s| self.text(s).len()).sum::<usize>() > NODE
-        {
-            return None;
-        }
-        let input = self.input(key, built)?;
-        (input.len() <= NODE).then(|| flat(input.trim_end()))
+        let text = match self.lines.get(&key)? {
+            Source::Chunk { items, .. } | Source::Turn(items) => {
+                if items.iter().map(|&s| self.text(s).len()).sum::<usize>() > NODE {
+                    return None;
+                }
+                items.iter().map(|&s| bare(self.text(s))).collect()
+            }
+            Source::Chunked { message, chunks } => {
+                let mut s = message.map_or(String::new(), |m| bare(self.text(m)));
+                for &k in chunks {
+                    s += &format!("{}\n", built(k)?);
+                }
+                s
+            }
+            Source::Node(_) => self.input(key, built)?,
+        };
+        (text.len() <= NODE).then(|| flat(text.trim_end()))
     }
 
     /// The message of the call that writes line `key`; `None` until every line it is made
@@ -358,9 +384,7 @@ impl Rollup {
         Some(match source {
             Source::Chunk { message, .. } => task(
                 CHUNK,
-                message
-                    .map(|m| clip(self.text(m), Some(CLIP), m))
-                    .as_deref(),
+                message.map(|m| clip(self.text(m), CLIP)).as_deref(),
                 &input,
             ),
             Source::Turn(_) => task(TURN, None, &input),
@@ -392,14 +416,14 @@ mod tests {
 
     #[test]
     fn a_call_reads_items_cut_to_their_share() {
-        let r = |k| render(7, &item(k));
-        assert_eq!(r(Kind::User("fix it".into())), "7|user: fix it\n");
+        let r = |k| render(Place { turn: 2, item: 7 }, &item(k));
+        assert_eq!(r(Kind::User("fix it".into())), "2.7|user: fix it\n");
         let result = r(Kind::ToolResult {
             id: "t1".into(),
             output: "o".repeat(3 * CLIP),
             is_error: false,
         });
-        assert!(result.len() < CLIP + 100 && result.contains("bytes cut: zoom 7"));
+        assert!(result.len() < CLIP + 100 && result.contains("bytes cut ...]"));
         let reply = r(Kind::Text("t".repeat(INPUT)));
         assert!(reply.len() < INPUT / 2 + 100 && reply.len() > INPUT / 2);
     }

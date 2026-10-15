@@ -1,31 +1,58 @@
 use serde_json::Value;
 
-use crate::chat::model::{Item, Kind, Marker};
+use crate::{
+    chat::{
+        id::Id,
+        model::{Item, Kind, Marker},
+    },
+    memory::{flat, plural},
+};
 
-/// How much of an item a line shows, in bytes: of its words, and of each tool input or output.
+/// No cut.
+pub const WHOLE: usize = usize::MAX;
+
+/// How much of an item a line shows, in bytes: of its words, of a tool call's input, and of a
+/// tool output.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cut {
     pub words: usize,
-    pub tool: usize,
+    /// A cut input is on one line.
+    pub input: usize,
+    /// `None` shows only the output's size.
+    pub output: Option<usize>,
 }
 
-/// Item `seq` as a line, `seq|kind: text`, cut by `cut`; whole if `None`. A tool call's input
-/// is `key=value` per field, strings verbatim.
-pub fn item_line(seq: u64, item: &Item, cut: Option<Cut>) -> String {
-    let words = cut.map(|c| c.words);
-    let tool = cut.map(|c| c.tool);
+impl Cut {
+    pub const WHOLE: Cut = Cut {
+        words: WHOLE,
+        input: WHOLE,
+        output: Some(WHOLE),
+    };
+}
+
+/// Item `id` as `id|kind: text`, cut by `cut`; its text continues on lines indented by two
+/// spaces. A tool call's input is `key=value` per field, strings verbatim.
+pub fn item_line(id: Id, item: &Item, cut: Cut) -> String {
     let (label, text) = match &item.kind {
-        Kind::User(t) => ("user".to_string(), clip(t, words, seq)),
-        Kind::Work { from, text } => (format!("work from {from}"), clip(text, words, seq)),
-        Kind::Text(t) => ("ai".into(), clip(t, words, seq)),
+        Kind::User(t) => ("user".to_string(), clip(t, cut.words)),
+        Kind::Work { from, text } => (format!("agent {from}"), clip(text, cut.words)),
+        Kind::Text(t) => ("ai".into(), clip(t, cut.words)),
         Kind::ToolCall { name, input, .. } => {
-            (format!("call {name}"), clip(&args(input), tool, seq))
+            let input = match cut.input {
+                WHOLE => args(input),
+                max => clip(&flat(&args(input)), max),
+            };
+            (format!("tool {name}"), input)
         }
         Kind::ToolResult {
             output, is_error, ..
         } => {
-            let label = if *is_error { "error" } else { "result" };
-            (label.into(), clip(output, tool, seq))
+            let label = if *is_error { "error" } else { "output" };
+            let text = match cut.output {
+                Some(max) => clip(output, max),
+                None => size(output),
+            };
+            (label.into(), text)
         }
         Kind::Marker(m) => {
             let what = match m {
@@ -33,10 +60,23 @@ pub fn item_line(seq: u64, item: &Item, cut: Option<Cut>) -> String {
                 Marker::Summary => "the harness's summary of the context it compacted",
                 Marker::Interrupt => "interrupted by the user",
             };
-            return format!("{seq}|[{what}]");
+            return format!("{id}|[{what}]");
         }
     };
-    format!("{seq}|{label}: {text}")
+    let text: Vec<&str> = text.trim_end().lines().collect();
+    format!("{id}|{label}: {}", text.join("\n  "))
+}
+
+/// A tool output's size, in place of its text.
+fn size(output: &str) -> String {
+    match output.trim_end() {
+        "" => "(empty)".into(),
+        o => format!(
+            "({}, {} bytes)",
+            plural(o.lines().count() as u64, "line"),
+            output.len()
+        ),
+    }
 }
 
 /// A tool call's input: `key=value` per field, strings verbatim.
@@ -56,16 +96,15 @@ fn args(v: &Value) -> String {
     }
 }
 
-/// `s` in about `max` bytes: its head and tail around a note on what was cut from item `seq`;
-/// whole if `None`.
-pub fn clip(s: &str, max: Option<usize>, seq: u64) -> String {
-    let Some(max) = max.filter(|&m| s.len() > m) else {
+/// `s` in about `max` bytes: its head and tail around a note on how much was cut.
+pub fn clip(s: &str, max: usize) -> String {
+    if s.len() <= max {
         return s.into();
-    };
+    }
     let head = &s[..s.floor_char_boundary(max / 2)];
     let tail = &s[s.ceil_char_boundary(s.len() - max / 2)..];
     let cut = s.len() - head.len() - tail.len();
-    format!("{head} [... {cut} bytes cut: zoom {seq} ...] {tail}")
+    format!("{head} [... {cut} bytes cut ...] {tail}")
 }
 
 #[cfg(test)]
@@ -78,14 +117,11 @@ mod tests {
 
     #[test]
     fn clips_keep_head_and_tail() {
-        assert_eq!(clip("short", Some(10), 3), "short");
-        assert_eq!(clip("short", None, 3), "short");
+        assert_eq!(clip("short", 10), "short");
+        assert_eq!(clip("short", WHOLE), "short");
         let s = format!("{}{}", "a".repeat(10), "b".repeat(10));
-        assert_eq!(
-            clip(&s, Some(8), 3),
-            "aaaa [... 12 bytes cut: zoom 3 ...] bbbb"
-        );
-        let c = clip(&"é".repeat(10), Some(7), 3);
+        assert_eq!(clip(&s, 8), "aaaa [... 12 bytes cut ...] bbbb");
+        let c = clip(&"é".repeat(10), 7);
         assert!(c.starts_with("é [") && c.ends_with("] é"), "{c}");
     }
 
@@ -103,22 +139,29 @@ mod tests {
         }
     }
 
+    const ID: Id = Id::Items {
+        turn: 3,
+        first: 7,
+        n: 1,
+    };
+
     #[test]
-    fn items_are_one_line_each() {
-        let cut = Some(Cut {
+    fn items_print_with_their_kind() {
+        let cut = Cut {
             words: 100,
-            tool: 40,
-        });
-        let r = |k| item_line(7, &item(k), cut);
-        assert_eq!(r(Kind::User("fix it".into())), "7|user: fix it");
+            input: 40,
+            output: Some(40),
+        };
+        let r = |k| item_line(ID, &item(k), cut);
+        assert_eq!(r(Kind::User("fix it".into())), "3.7|user: fix it");
         assert_eq!(
             r(Kind::Work {
                 from: "reviewer".into(),
                 text: "done".into()
             }),
-            "7|work from reviewer: done"
+            "3.7|agent reviewer: done"
         );
-        assert_eq!(r(Kind::Text("ok".into())), "7|ai: ok");
+        assert_eq!(r(Kind::Text("ok".into())), "3.7|ai: ok");
         let call = |input| Kind::ToolCall {
             id: "t1".into(),
             name: "Bash".into(),
@@ -126,16 +169,16 @@ mod tests {
         };
         assert_eq!(
             r(call(json!({"command": "cargo test", "timeout": 60}))),
-            "7|call Bash: command=cargo test timeout=60"
+            "3.7|tool Bash: command=cargo test timeout=60"
         );
-        assert_eq!(r(call(json!("ls"))), "7|call Bash: ls");
+        assert_eq!(r(call(json!("ls"))), "3.7|tool Bash: ls");
         let edit = r(call(
             json!({"old_string": "x".repeat(50), "new_string": "y"}),
         ));
         assert_eq!(
             edit,
             format!(
-                "7|call Bash: new_string=y old_str [... 34 bytes cut: zoom 7 ...] {}",
+                "3.7|tool Bash: new_string=y old_str [... 34 bytes cut ...] {}",
                 "x".repeat(20)
             )
         );
@@ -150,19 +193,64 @@ mod tests {
         assert_eq!(
             result(true),
             format!(
-                "7|error: {} [... 20 bytes cut: zoom 7 ...] {}",
+                "3.7|error: {} [... 20 bytes cut ...] {}",
                 "h".repeat(20),
                 "t".repeat(20)
             )
         );
-        assert!(result(false).starts_with("7|result: hhh"));
+        assert!(result(false).starts_with("3.7|output: hhh"));
         assert_eq!(
-            item_line(7, &item(Kind::Text(out.clone())), None),
-            format!("7|ai: {out}")
+            item_line(ID, &item(Kind::Text(out.clone())), Cut::WHOLE),
+            format!("3.7|ai: {out}")
         );
         assert_eq!(
             r(Kind::Marker(Marker::Interrupt)),
-            "7|[interrupted by the user]"
+            "3.7|[interrupted by the user]"
         );
+    }
+
+    #[test]
+    fn text_continues_indented_and_a_cut_input_is_one_line() {
+        let r = |k, cut| item_line(ID, &item(k), cut);
+        assert_eq!(
+            r(Kind::Text("one\n## two\r\n3|three\n".into()), Cut::WHOLE),
+            "3.7|ai: one\n  ## two\n  3|three"
+        );
+        let call = Kind::ToolCall {
+            id: "t1".into(),
+            name: "Bash".into(),
+            input: json!({"command": "cat <<EOF\nhi\nEOF"}),
+        };
+        assert_eq!(
+            r(call.clone(), Cut::WHOLE),
+            "3.7|tool Bash: command=cat <<EOF\n  hi\n  EOF"
+        );
+        let one = Cut {
+            input: 400,
+            ..Cut::WHOLE
+        };
+        assert_eq!(r(call, one), "3.7|tool Bash: command=cat <<EOF hi EOF");
+    }
+
+    #[test]
+    fn a_hidden_output_shows_its_size() {
+        let hidden = Cut {
+            output: None,
+            ..Cut::WHOLE
+        };
+        let r = |output: &str, is_error| {
+            item_line(
+                ID,
+                &item(Kind::ToolResult {
+                    id: "t1".into(),
+                    output: output.into(),
+                    is_error,
+                }),
+                hidden,
+            )
+        };
+        assert_eq!(r("a\nbb\n", false), "3.7|output: (2 lines, 5 bytes)");
+        assert_eq!(r("oops", true), "3.7|error: (1 line, 4 bytes)");
+        assert_eq!(r("", false), "3.7|output: (empty)");
     }
 }
