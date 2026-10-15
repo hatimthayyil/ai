@@ -36,6 +36,8 @@ ai/comments/src/chat/prompts/compact.txt.md
   s_77b04d9838f161::t_dc4c806a11330d 1-8
 ai/comments/src/chat/rollup.rs.md
   s_77b04d9838f161::t_0720b3b8098974 1-22
+ai/comments/src/chat/mod.rs.md
+  s_77b04d9838f161::t_ec58c0d04a25e0 3
 ---
 {
   "schema_version": "authorship/3.0.0",
