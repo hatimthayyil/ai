@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     fs,
+    io::{self, BufRead},
     path::{Path, PathBuf},
 };
 
@@ -58,6 +59,22 @@ pub fn transcript(config: &Path, session: &str, cwd: &Path) -> Option<PathBuf> {
         .flatten()
         .map(|e| e.path().join(&file))
         .find(|p| p.is_file())
+}
+
+/// The directory the session of the transcript at `path` ran in: the `cwd` of its first entry
+/// that records one.
+pub fn session_dir(path: &Path) -> Option<PathBuf> {
+    let f = fs::File::open(path).ok()?;
+    io::BufReader::new(f)
+        .lines()
+        .map_while(Result::ok)
+        .find_map(|l| {
+            let v: Value = serde_json::from_str(&l).ok()?;
+            v["cwd"]
+                .as_str()
+                .filter(|d| !d.is_empty())
+                .map(PathBuf::from)
+        })
 }
 
 /// The items of the transcript at `path`, as [`parse`] gives them.

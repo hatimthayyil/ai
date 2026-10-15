@@ -19,7 +19,7 @@ const ISOLATE: [&str; 5] = [
     "GIT_COMMITTER_NAME",
 ];
 
-/// A git repository with the background compactor off, a Claude Code config dir and a fake
+/// A git repository with the background summariser off, a Claude Code config dir and a fake
 /// `claude`, in a temporary directory.
 struct Sandbox {
     _tmp: TempDir,
@@ -30,19 +30,24 @@ impl Sandbox {
     fn new() -> Sandbox {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().canonicalize().unwrap();
-        gix::init(root.join("repo")).unwrap();
-        let off = Command::new("git")
-            .args(["config", "ai.chat.nap", "false"])
-            .current_dir(root.join("repo"))
-            .status()
-            .unwrap();
-        assert!(off.success());
         for d in ["home", "claude", "out", "bin"] {
             fs::create_dir(root.join(d)).unwrap();
         }
         let s = Sandbox { _tmp: tmp, root };
+        s.init(&s.repo());
         s.fake_claude();
         s
+    }
+
+    /// A git repository at `dir`, with the background summariser off.
+    fn init(&self, dir: &Path) {
+        gix::init(dir).unwrap();
+        let off = Command::new("git")
+            .args(["config", "ai.chat.summarise", "false"])
+            .current_dir(dir)
+            .status()
+            .unwrap();
+        assert!(off.success());
     }
 
     fn repo(&self) -> PathBuf {
@@ -59,14 +64,20 @@ impl Sandbox {
     /// Writes the transcript of `session` as Claude Code would, for a session started in the
     /// repository.
     fn transcript(&self, session: &str, text: &str) -> PathBuf {
-        let dir = self.project(&self.repo());
-        fs::create_dir_all(&dir).unwrap();
-        let p = dir.join(format!("{session}.jsonl"));
+        self.transcript_in(&self.repo(), session, text)
+    }
+
+    /// Writes the transcript of `session`, started in `dir`.
+    fn transcript_in(&self, dir: &Path, session: &str, text: &str) -> PathBuf {
+        let project = self.project(dir);
+        fs::create_dir_all(&project).unwrap();
+        let p = project.join(format!("{session}.jsonl"));
         fs::write(&p, text).unwrap();
         p
     }
 
-    /// A `claude` that records its arguments, one per line, in `out/argv`.
+    /// A `claude` that records its arguments, one per line, in `out/argv`, and its working
+    /// directory in `out/cwd`.
     fn fake_claude(&self) {
         let path = std::env::var("PATH").unwrap();
         let bash = std::env::split_paths(&path)
@@ -74,11 +85,12 @@ impl Sandbox {
             .find(|p| p.is_file())
             .expect("bash on PATH");
         let src = self.root.join("claude.sh");
-        let argv = self.root.join("out/argv");
+        let out = self.root.join("out");
         let body = format!(
-            "#!{}\nprintf '%s\\n' \"$@\" > {}\n",
+            "#!{}\nprintf '%s\\n' \"$@\" > {}\npwd > {}\n",
             bash.display(),
-            argv.display()
+            out.join("argv").display(),
+            out.join("cwd").display()
         );
         fs::write(&src, body).unwrap();
         let dst = self.root.join("bin/claude");
@@ -103,6 +115,14 @@ impl Sandbox {
             .collect();
         fs::remove_file(p).unwrap();
         argv
+    }
+
+    /// The directory the fake `claude` was last run in.
+    fn claude_dir(&self) -> PathBuf {
+        let p = self.root.join("out/cwd");
+        let dir = fs::read_to_string(&p).unwrap().trim_end().into();
+        fs::remove_file(p).unwrap();
+        dir
     }
 
     fn cmd(&self, dir: &Path) -> Command {
@@ -138,7 +158,12 @@ impl Sandbox {
 
     /// `ai chat args` run inside session `session`, as its Bash tool runs it.
     fn ai_in(&self, session: &str, args: &[&str]) -> Output {
-        self.cmd(&self.repo())
+        self.ai_at(&self.repo(), session, args)
+    }
+
+    /// `ai chat args` run in `dir`, inside session `session`.
+    fn ai_at(&self, dir: &Path, session: &str, args: &[&str]) -> Output {
+        self.cmd(dir)
             .env("CLAUDE_CODE_SESSION_ID", session)
             .args(args)
             .output()
@@ -180,6 +205,14 @@ fn ok(o: Output, want: &str) {
     assert_eq!(stdout(&o), want);
 }
 
+/// Exit 1 with this message.
+fn fails(o: Output, err: &str) {
+    assert_eq!(
+        (code(&o), stdout(&o).as_str(), stderr(&o).as_str()),
+        (1, "", err)
+    );
+}
+
 /// Exit 3, nothing printed.
 fn unattached(o: Output) {
     assert_eq!(code(&o), i32::from(NOT_ATTACHED), "{}", stderr(&o));
@@ -214,6 +247,17 @@ fn talk(n: usize, ask: impl Fn(usize) -> String) -> String {
     out
 }
 
+/// `text` with every entry recording `dir` as the directory it ran in.
+fn ran_in(text: &str, dir: &Path) -> String {
+    text.lines()
+        .map(|l| {
+            let mut v: Value = serde_json::from_str(l).unwrap();
+            v["cwd"] = json!(dir);
+            format!("{v}\n")
+        })
+        .collect()
+}
+
 /// The sequence number of the last item of each exchange on the newest branch of `name`.
 fn exchange_ends(s: &Sandbox, name: &str) -> Vec<u64> {
     let t = s.chat().thread(name).unwrap();
@@ -235,23 +279,59 @@ fn section<'v>(view: &'v str, title: &str) -> Vec<&'v str> {
 }
 
 #[test]
-fn commands_for_an_unattached_session_exit_3_silently() {
+fn plumbing_for_an_unattached_session_exits_3_silently() {
     let s = Sandbox::new();
     let flags = ["--harness", "claude", "--session", "s-1"];
-    for cmd in [
-        &["sync"][..],
-        &["compact"],
-        &["detach"],
-        &["zoom", "0"],
-        &["resume"],
-    ] {
+    for cmd in [&["sync-session"][..], &["compact-session"]] {
         unattached(s.ai(&[cmd, &flags[..]].concat()));
         unattached(s.ai_in("s-1", cmd));
-    }
-    for cmd in [&["sync"][..], &["compact"], &["detach"], &["zoom", "0"]] {
         unattached(s.ai(cmd));
     }
-    unattached(s.outside(&["sync", "--session", "s-1"]));
+    unattached(s.outside(&["sync-session", "--session", "s-1"]));
+}
+
+#[test]
+fn porcelain_without_a_thread_says_what_to_do() {
+    let s = Sandbox::new();
+    let attach = "This session is not attached to a thread. Attach it with `ai chat attach <name>`, or name a thread with -t.\n";
+    let name = "Name a thread with -t: this is not a harness session. List them: ai chat list\n";
+    for cmd in [&["view"][..], &["zoom", "0"], &["summarise"]] {
+        fails(s.ai_in("s-1", cmd), attach);
+        fails(s.ai(cmd), name);
+    }
+    fails(
+        s.ai_in("s-1", &["detach"]),
+        "This session is not attached to a thread.\n",
+    );
+    fails(
+        s.ai(&["view", "-t", "dev"]),
+        "No thread dev in this repository. List them: ai chat list\n",
+    );
+    fails(
+        s.outside(&["view", "-t", "dev"]),
+        "Not in a git repository: ai chat keeps its threads in one.\n",
+    );
+}
+
+#[test]
+fn plumbing_is_hidden_from_help() {
+    let s = Sandbox::new();
+    let help = stdout(&s.ai(&["--help"]));
+    for cmd in [
+        "start",
+        "resume",
+        "list",
+        "view",
+        "attach",
+        "detach",
+        "zoom",
+        "summarise",
+    ] {
+        assert!(help.contains(&format!("\n  {cmd} ")), "{cmd}: {help}");
+    }
+    for cmd in ["sync-session", "compact-session", "nap", "claude"] {
+        assert!(!help.contains(cmd), "{cmd}: {help}");
+    }
 }
 
 #[test]
@@ -270,7 +350,7 @@ fn attach_sync_and_detach() {
     let path = s.transcript("s-1", &all);
     ok(
         s.ai(&[
-            "sync",
+            "sync-session",
             "--session",
             "s-1",
             "--transcript",
@@ -285,14 +365,18 @@ fn attach_sync_and_detach() {
         "Attached to other, a new thread; detached from dev.\n",
     );
     ok(s.ai_in("s-1", &["detach"]), "Detached from other.\n");
-    unattached(s.ai_in("s-1", &["detach"]));
-
-    let o = s.ai(&["attach", "dev"]);
-    assert_eq!(code(&o), 1);
-    assert_eq!(
-        stderr(&o),
-        "No session: run this inside a harness session, or pass --session.\n"
+    fails(
+        s.ai_in("s-1", &["detach"]),
+        "This session is not attached to a thread.\n",
     );
+
+    for cmd in ["attach", "detach"] {
+        let args = [cmd, "dev"];
+        fails(
+            s.ai(&args[..usize::from(cmd == "attach") + 1]),
+            "No session: run this inside a harness session, or pass --session.\n",
+        );
+    }
     let o = s.ai_in("s-1", &["attach", "a/b"]);
     assert_eq!(code(&o), 1);
     assert!(stderr(&o).contains("is not a thread name"));
@@ -302,7 +386,7 @@ fn attach_sync_and_detach() {
 }
 
 #[test]
-fn compact_syncs_and_prints_the_view() {
+fn compact_session_syncs_and_prints_the_view() {
     let s = Sandbox::new();
     let all = fixture("interject.jsonl");
     let first: String = all.split_inclusive('\n').take(14).collect();
@@ -314,19 +398,23 @@ fn compact_syncs_and_prints_the_view() {
     s.transcript("s-1", &all);
     let ends = exchange_ends(&s, "dev");
     s.line("dev", 1, ends[0], "user asked to run the tests; two failed");
-    let o = s.ai(&["compact", "--harness", "claude", "--session", "s-1"]);
+    let o = s.ai(&["compact-session", "--harness", "claude", "--session", "s-1"]);
     assert_eq!((code(&o), stderr(&o).as_str()), (0, ""));
     let view = stdout(&o);
     assert!(view.starts_with("# Thread `dev`\n\nThis is your memory of the thread `dev`"));
     assert!(view.contains("`ai chat zoom a-b`"));
     let ends = exchange_ends(&s, "dev");
-    assert_eq!(ends.len(), 4, "compact synced the rest of the transcript");
+    assert_eq!(
+        ends.len(),
+        4,
+        "compact-session synced the rest of the transcript"
+    );
     let fold = section(&view, "Earlier exchanges, summarized");
     assert_eq!(fold.len(), 3);
     assert!(fold[0].ends_with("|user asked to run the tests; two failed"));
     assert!(
         fold[1].starts_with("4-10|4|user: Skip the network tests. 5|ai: "),
-        "compact built the short exchange as its own line: {fold:#?}"
+        "compact-session built the short exchange as its own line: {fold:#?}"
     );
     assert!(fold[2].starts_with("11-13|11|user: Don't commit yet."));
     let rail = section(&view, "The user's latest messages");
@@ -340,7 +428,7 @@ fn compact_syncs_and_prints_the_view() {
 }
 
 #[test]
-fn compact_fails_with_its_reason() {
+fn compact_session_fails_with_its_reason() {
     let s = Sandbox::new();
     let path = s.root.join("out/p-1.jsonl");
     let p = path.to_str().unwrap();
@@ -350,20 +438,18 @@ fn compact_fails_with_its_reason() {
         "Attached to dev, a new thread.\n",
     );
     fs::write(&path, "{}\n").unwrap();
-    let o = s.ai(&[&["compact"][..], &flags].concat());
-    assert_eq!(code(&o), 1);
-    assert_eq!(
-        (stdout(&o).as_str(), stderr(&o).as_str()),
-        ("", "ai chat cannot read pi sessions.\n")
+    fails(
+        s.ai(&[&["compact-session"][..], &flags].concat()),
+        "ai chat cannot read pi sessions.\n",
     );
 }
 
 #[test]
-fn resume_lists_the_threads_or_pages_the_view() {
+fn list_shows_this_repositorys_threads_and_their_sessions() {
     let s = Sandbox::new();
     ok(
-        s.ai(&["resume"]),
-        "No threads here. Start one: ai chat claude <name>\n",
+        s.ai(&["list"]),
+        "No threads in this repository. Start one: ai chat start <name>\n",
     );
     s.transcript("s-1", &fixture("rewind.jsonl"));
     ok(
@@ -375,34 +461,52 @@ fn resume_lists_the_threads_or_pages_the_view() {
         s.ai_in("s-2", &["attach", "long-one"]),
         "Attached to long-one, a new thread.\n",
     );
+    s.transcript("s-10", &talk(1, |_| "later".into()));
+    ok(s.ai_in("s-10", &["attach", "dev"]), "Attached to dev.\n");
+    ok(s.ai_in("s-10", &["detach"]), "Detached from dev.\n");
     ok(
-        s.ai(&["resume"]),
-        "dev       claude  2026-10-14 13:02  2 branches\n\
-         long-one  claude  2026-10-14 10:01  1 branch\n",
+        s.ai_in("s-2", &["list"]),
+        "dev  3 turns  2026-10-14 10:00  2 branches\n\
+         \x20 claude  s-1   attached  2026-10-14 13:02\n\
+         \x20 claude  s-10  detached  2026-10-14 10:00\n\
+         long-one  100 turns  2026-10-14 10:01\n\
+         \x20 claude  s-2  attached  2026-10-14 10:01  this session\n",
     );
+}
 
+#[test]
+fn view_prints_a_thread_in_parts_from_one_commit() {
+    let s = Sandbox::new();
+    s.transcript("s-2", &talk(100, |k| format!("question {k}")));
+    ok(
+        s.ai_in("s-2", &["attach", "long-one"]),
+        "Attached to long-one, a new thread.\n",
+    );
     let ends = exchange_ends(&s, "long-one");
     let text = |k: usize| format!("{k} {}", "w".repeat(500));
     for (k, &end) in ends.iter().enumerate().filter(|e| e.0 != 60) {
         s.line("long-one", 1, end, &text(k));
     }
-    let o = s.ai(&["compact", "--session", "s-2"]);
+    let o = s.ai(&["compact-session", "--session", "s-2"]);
     let view = stdout(&o);
     assert!(
         view.len() > 2 * 20_000 && view.len() < 3 * 19_000,
         "{}",
         view.len()
     );
-    let o = s.ai_in("s-2", &["resume"]);
-    let first = stdout(&o);
+    let first = stdout(&s.ai_in("s-2", &["view"]));
+    assert_eq!(
+        first,
+        stdout(&s.ai(&["view", "-t", "long-one"])),
+        "outside the session: the thread's newest branch, here the same"
+    );
     let (body, footer) = first.trim_end().rsplit_once('\n').unwrap();
     let next = footer.strip_prefix("Part 1 of 3. Next: ai chat ").unwrap();
-    assert!(next.starts_with("resume --part 2 --at "));
+    assert!(next.starts_with("view -t long-one --part 2 --at "));
     let mut parts = body.to_string() + "\n";
     s.line("long-one", 1, ends[60], &text(60));
     let args: Vec<&str> = next.split(' ').collect();
-    let o = s.ai_in("s-2", &args);
-    let second = stdout(&o);
+    let second = stdout(&s.ai(&args));
     let (body, footer) = second.trim_end().rsplit_once('\n').unwrap();
     parts += &(body.to_string() + "\n");
     let args: Vec<&str> = footer
@@ -416,7 +520,7 @@ fn resume_lists_the_threads_or_pages_the_view() {
     assert_eq!(footer, "Part 3 of 3, the last.");
     parts += &(body.to_string() + "\n");
     assert_eq!(parts, view, "the parts come from one commit");
-    let o = s.ai_in("s-2", &["resume", "--part", "2", "--at", "xyz"]);
+    let o = s.ai_in("s-2", &["view", "--part", "2", "--at", "xyz"]);
     assert_eq!(code(&o), 1);
     assert!(stderr(&o).contains("'xyz' is not a commit id"));
 }
@@ -441,6 +545,10 @@ fn zoom_opens_lines_and_items() {
     s.line("dev", 2, 3, "first two");
     ok(s.ai_in("s-1", &["zoom", "0-3"]), "0-1|first\n2-3|second\n");
     ok(
+        s.ai(&["zoom", "-t", "dev", "0-3"]),
+        "0-1|first\n2-3|second\n",
+    );
+    ok(
         s.ai_in("s-1", &["zoom", "0-7"]),
         "0-3|first two\n4-7|(not summarized yet: zoom 4-7)\n",
     );
@@ -451,8 +559,8 @@ fn zoom_opens_lines_and_items() {
     ok(s.ai_in("s-1", &["zoom", "5"]), "5|ai: reply 2\n");
     let o = s.ai_in("s-1", &["zoom", "8"]);
     let out = stdout(&o);
-    assert!(out.ends_with("\nPart 1 of 2. Next: ai chat zoom 8 2\n"));
-    let rest = stdout(&s.ai_in("s-1", &["zoom", "8", "2"]));
+    assert!(out.ends_with("\nPart 1 of 2. Next: ai chat zoom -t dev 8 2\n"));
+    let rest = stdout(&s.ai(&["zoom", "-t", "dev", "8", "2"]));
     let whole = out.rsplit_once("\nPart 1").unwrap().0.to_string() + &rest;
     assert_eq!(whole, format!("8|user: {}\n", "paste ".repeat(5_000)));
     for (id, err) in [
@@ -463,18 +571,18 @@ fn zoom_opens_lines_and_items() {
         ("0-5", "No line 0-5.\n"),
         ("9", "No line 9.\n"),
     ] {
-        let o = s.ai_in("s-1", &["zoom", id]);
-        assert_eq!((code(&o), stderr(&o).as_str()), (1, err));
+        fails(s.ai_in("s-1", &["zoom", id]), err);
     }
 }
 
 #[test]
-fn the_launcher_binds_a_new_session_and_starts_claude() {
+fn start_binds_a_new_session_and_starts_claude() {
     let s = Sandbox::new();
-    ok(s.ai(&["claude", "dev", "--", "--model", "haiku"]), "");
+    ok(s.ai(&["start", "dev", "--", "--model", "haiku"]), "");
     let argv = s.argv();
     assert_eq!(argv[0], "--session-id");
     assert_eq!(argv[2..], ["--model", "haiku"]);
+    assert_eq!(s.claude_dir(), s.repo());
     let id = &argv[1];
     assert_eq!(id.len(), 36);
     let t = s.chat().thread("dev").unwrap();
@@ -488,13 +596,14 @@ fn the_launcher_binds_a_new_session_and_starts_claude() {
     let want = s.project(&s.repo()).join(format!("{id}.jsonl"));
     assert_eq!(b.transcript, Some(want.clone()));
     assert_eq!((b.graft, b.tip), (None, None));
-    ok(s.ai(&["compact", "--session", id]), "");
+    ok(s.ai(&["compact-session", "--session", id]), "");
+    ok(s.ai_in(id, &["view"]), "Thread dev holds nothing yet.\n");
 
     fs::create_dir_all(want.parent().unwrap()).unwrap();
     fs::write(&want, fixture("plain.jsonl")).unwrap();
-    unattached(s.ai_in("other", &["sync"]));
-    ok(s.ai_in(id, &["sync"]), "");
-    ok(s.ai(&["claude", "dev"]), "");
+    unattached(s.ai_in("other", &["sync-session"]));
+    ok(s.ai_in(id, &["sync-session"]), "");
+    ok(s.ai(&["start", "dev"]), "");
     let second = &s.argv()[1];
     assert_ne!(second, id);
     let b = t
@@ -508,7 +617,7 @@ fn the_launcher_binds_a_new_session_and_starts_claude() {
         Some(3),
         "a new session hangs on the thread's newest item"
     );
-    let o = s.ai(&["compact", "--session", second]);
+    let o = s.ai(&["compact-session", "--session", second]);
     let seed = stdout(&o);
     assert_eq!(code(&o), 0, "{}", stderr(&o));
     assert!(seed.starts_with("# Thread `dev`"), "{seed}");
@@ -519,21 +628,20 @@ fn the_launcher_binds_a_new_session_and_starts_claude() {
         "a new session's view ends at its graft: {seed}"
     );
 
-    let o = s.ai(&["claude", "a b"]);
+    let o = s.ai(&["start", "a b"]);
     assert_eq!(code(&o), 1);
     assert!(stderr(&o).contains("is not a thread name"));
 }
 
 #[test]
-fn resume_continues_the_newest_session_or_starts_one() {
+fn resume_continues_the_newest_session_in_its_directory_or_starts_one() {
     let s = Sandbox::new();
-    let o = s.ai(&["resume", "dev"]);
-    assert_eq!(
-        (code(&o), stderr(&o).as_str()),
-        (1, "No thread dev. Start one: ai chat claude dev\n")
+    fails(
+        s.ai(&["resume", "dev"]),
+        "No thread dev in this repository. Start one: ai chat start dev\n",
     );
-    s.transcript("s-1", &fixture("plain.jsonl"));
-    let newest = s.transcript("s-2", &talk(1, |_| "later".into()));
+    s.transcript("s-1", &ran_in(&fixture("plain.jsonl"), &s.repo()));
+    let newest = s.transcript("s-2", &ran_in(&talk(1, |_| "later".into()), &s.repo()));
     ok(
         s.ai_in("s-1", &["attach", "dev"]),
         "Attached to dev, a new thread.\n",
@@ -543,6 +651,7 @@ fn resume_continues_the_newest_session_or_starts_one() {
 
     ok(s.ai(&["resume", "dev", "--", "--model", "haiku"]), "");
     assert_eq!(s.argv(), ["--resume", "s-2", "--model", "haiku"]);
+    assert_eq!(s.claude_dir(), s.repo());
     let t = s.chat().thread("dev").unwrap();
     let b = t
         .snapshot()
@@ -552,13 +661,26 @@ fn resume_continues_the_newest_session_or_starts_one() {
         .unwrap();
     assert!(b.is_attached(), "resuming re-attaches it");
 
-    let elsewhere = s.root.join("repo/sub");
-    fs::create_dir(&elsewhere).unwrap();
-    let o = s.cmd(&elsewhere).args(["resume", "dev"]).output().unwrap();
-    assert_eq!(code(&o), 0);
+    let sub = s.repo().join("sub");
+    fs::create_dir(&sub).unwrap();
+    let o = s.cmd(&sub).args(["resume", "dev"]).output().unwrap();
+    assert_eq!((code(&o), stderr(&o).as_str()), (0, ""));
+    assert_eq!(s.argv(), ["--resume", "s-2"]);
+    assert_eq!(
+        s.claude_dir(),
+        s.repo(),
+        "resumed where the session ran, from a subdirectory"
+    );
+
+    let away = s.root.join("out");
+    fs::write(&newest, ran_in(&talk(1, |_| "later".into()), &away)).unwrap();
+    let o = s.ai(&["resume", "dev"]);
     assert_eq!(
         stderr(&o),
-        "Cannot resume dev here: session s-2 ran in another directory. Starting a new session.\n"
+        format!(
+            "Cannot resume dev: session s-2 ran in {}, outside this repository. Starting a new session.\n",
+            away.display()
+        )
     );
     assert_eq!(s.argv()[0], "--session-id");
 
@@ -566,7 +688,7 @@ fn resume_continues_the_newest_session_or_starts_one() {
     let o = s.ai(&["resume", "dev", "--", "--model", "haiku"]);
     assert_eq!(
         stderr(&o),
-        "Cannot resume dev here: the transcript of session s-2 is gone. Starting a new session.\n"
+        "Cannot resume dev: the transcript of session s-2 is gone. Starting a new session.\n"
     );
     let argv = s.argv();
     assert_eq!(argv[0], "--session-id");
@@ -578,4 +700,101 @@ fn resume_continues_the_newest_session_or_starts_one() {
         .unwrap()
         .unwrap();
     assert!(b.is_attached() && b.graft.is_some());
+}
+
+#[test]
+fn threads_resolve_in_the_current_repository_only() {
+    let s = Sandbox::new();
+    let other = s.root.join("other");
+    s.init(&other);
+    s.transcript("s-1", &ran_in(&talk(2, |k| format!("here {k}")), &s.repo()));
+    s.transcript_in(
+        &other,
+        "s-2",
+        &ran_in(&talk(1, |k| format!("there {k}")), &other),
+    );
+    ok(
+        s.ai_in("s-1", &["attach", "dev"]),
+        "Attached to dev, a new thread.\n",
+    );
+    ok(
+        s.ai_at(&other, "s-2", &["attach", "dev"]),
+        "Attached to dev, a new thread.\n",
+    );
+    let list = |dir: &Path| stdout(&s.cmd(dir).arg("list").output().unwrap());
+    assert!(list(&s.repo()).contains("  s-1  ") && !list(&s.repo()).contains("s-2"));
+    assert!(list(&other).contains("  s-2  ") && !list(&other).contains("s-1"));
+    let here = stdout(&s.ai(&["zoom", "-t", "dev", "0"]));
+    let there = stdout(
+        &s.cmd(&other)
+            .args(["zoom", "-t", "dev", "0"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(
+        (here.as_str(), there.as_str()),
+        ("0|user: here 0\n", "0|user: there 0\n")
+    );
+    let o = s.cmd(&other).args(["resume", "dev"]).output().unwrap();
+    assert_eq!((code(&o), stderr(&o).as_str()), (0, ""));
+    assert_eq!(s.argv(), ["--resume", "s-2"]);
+    assert_eq!(s.claude_dir(), other);
+}
+
+#[test]
+fn summarise_writes_rewrites_and_dry_runs_the_lines() {
+    let s = Sandbox::new();
+    s.transcript("s-1", &talk(3, |k| format!("question {k}")));
+    ok(
+        s.ai_in("s-1", &["attach", "dev"]),
+        "Attached to dev, a new thread.\n",
+    );
+    s.line("dev", 1, 1, "first, by hand");
+    let fresh = "0-1|0|user: question 0 1|ai: reply 0\n";
+    let o = s.ai_in("s-1", &["summarise", "--dry-run", "--model", "opus"]);
+    let dry = stdout(&o);
+    assert_eq!((code(&o), stderr(&o).as_str()), (0, ""));
+    assert!(
+        !dry.contains(fresh),
+        "the line written by hand stays: {dry}"
+    );
+    assert!(
+        dry.ends_with("Dry run: 2 lines, 0 by the model; nothing stored.\n"),
+        "{dry}"
+    );
+    let all = |s: &Sandbox| {
+        let t = s.chat().thread("dev").unwrap();
+        t.snapshot().unwrap().all_lines().unwrap().len()
+    };
+    assert_eq!(all(&s), 1, "a dry run stores nothing");
+    let log = fs::read_to_string(s.repo().join(".git/ai/chat/dev.log")).unwrap();
+    assert!(
+        log.contains("dry_run{pid=") && log.contains("model=\"opus\""),
+        "{log}"
+    );
+
+    ok(
+        s.ai_in("s-1", &["summarise"]),
+        "Wrote 2 lines, 0 by the model.\n",
+    );
+    ok(s.ai(&["summarise", "-t", "dev"]), "Nothing to write.\n");
+    let o = s.ai_in("s-1", &["summarise", "--rebuild", "--dry-run"]);
+    let dry = stdout(&o);
+    assert!(
+        dry.starts_with(&format!("{fresh}  was: first, by hand\n")),
+        "{dry}"
+    );
+    assert!(dry.ends_with("Dry run: 3 lines, 0 by the model; nothing stored.\n"));
+    ok(
+        s.ai_in("s-1", &["summarise", "--rebuild"]),
+        "Dropped 3 lines; wrote 3, 0 by the model.\n",
+    );
+    let t = s.chat().thread("dev").unwrap();
+    let line = t
+        .snapshot()
+        .unwrap()
+        .line(Key { level: 1, last: 1 })
+        .unwrap()
+        .unwrap();
+    assert_eq!(format!("0-1|{}\n", line.text), fresh);
 }

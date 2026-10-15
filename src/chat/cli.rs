@@ -14,21 +14,23 @@ use gix::ObjectId;
 use crate::{
     chat::{
         claude,
-        nap::{build, nap},
         record::Binding,
         store::{Chat, Thread, check_name},
+        summarise::{build, dry_run, rebuild, summarise},
         sync::Synced,
         view::{Branch, Id, zoom},
     },
+    file,
     memory::{broken_pipe, page, plural},
 };
 
-/// The exit code of a command for a session attached to no thread; it prints nothing.
+/// The exit code of plumbing for a session attached to no thread; it prints nothing.
 pub const NOT_ATTACHED: u8 = 3;
 /// The largest part of a paged output, in bytes: under Claude Code's 30,000-character cap on
 /// a command's output.
 pub const PART: u64 = 20_000;
-/// How long `compact` waits for the lines its view needs.
+/// How long `compact-session` waits for the lines its view needs, and `summarise --rebuild`
+/// for a running summariser.
 pub const WAIT: Duration = Duration::from_secs(60);
 
 #[derive(Parser, Debug)]
@@ -44,30 +46,34 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    #[command(about = "start Claude Code in a new session attached to a thread.")]
-    Claude {
+    #[command(
+        about = "start Claude Code in a new session attached to a thread, creating it if new."
+    )]
+    Start {
         #[arg(help = "the thread: letters, digits, '-' and '_'")]
         name: String,
         #[arg(last = true, help = "arguments for claude, after --")]
         args: Vec<String>,
     },
-    #[command(
-        about = "with a name, continue the thread's newest Claude Code session; inside a session, print its thread's view; else list the threads."
-    )]
+    #[command(about = "continue the thread's newest Claude Code session.")]
     Resume {
-        name: Option<String>,
-        #[arg(
-            last = true,
-            requires = "name",
-            help = "arguments for claude, after --"
-        )]
+        name: String,
+        #[arg(last = true, help = "arguments for claude, after --")]
         args: Vec<String>,
+    },
+    #[command(about = "list this repository's threads and their sessions.")]
+    List {
+        #[command(flatten)]
+        session: Session,
+    },
+    #[command(about = "print a thread's view.")]
+    View {
+        #[command(flatten)]
+        target: Target,
         #[arg(long, help = "the part of the view to print, as printed")]
         part: Option<u64>,
         #[arg(long, help = "the thread commit the parts come from, as printed")]
         at: Option<String>,
-        #[command(flatten)]
-        session: Session,
     },
     #[command(about = "attach this session to a thread, creating it if new.")]
     Attach {
@@ -84,29 +90,48 @@ enum Command {
         about = "open a line of the view: a-b into the lines it was made from, n for item n."
     )]
     Zoom {
+        #[command(flatten)]
+        target: Target,
         #[arg(help = "a line's id, as printed: 120-245, or 7 for item 7")]
         id: String,
         #[arg(help = "the part of a long output to show, as printed")]
         part: Option<u64>,
-        #[command(flatten)]
-        session: Session,
     },
-    #[command(about = "for the harness plugin: copy this session's new entries into its thread.")]
-    Sync {
+    #[command(about = "write a thread's summary lines that are ready.")]
+    Summarise {
+        #[command(flatten)]
+        target: Target,
+        #[arg(
+            long,
+            help = "rewrite the lines already written, and the lines above them"
+        )]
+        rebuild: bool,
+        #[arg(
+            long,
+            help = "the model for this run [default: ai.chat.model, else sonnet]"
+        )]
+        model: Option<String>,
+        #[arg(
+            long,
+            help = "print each line it would write beside the line it replaces; store nothing"
+        )]
+        dry_run: bool,
+    },
+    #[command(
+        hide = true,
+        about = "plumbing: copy this session's new entries into its thread."
+    )]
+    SyncSession {
         #[command(flatten)]
         session: Session,
     },
     #[command(
-        about = "for the harness plugin: sync, then print the view this session compacts to."
+        hide = true,
+        about = "plumbing: sync, then print the view this session compacts to."
     )]
-    Compact {
+    CompactSession {
         #[command(flatten)]
         session: Session,
-    },
-    #[command(about = "build the thread's summaries; sync starts it in the background.")]
-    Nap {
-        #[arg(long)]
-        thread: String,
     },
 }
 
@@ -119,6 +144,20 @@ struct Session {
     session: Option<String>,
     #[arg(long, help = "the session's transcript [default: found from its id]")]
     transcript: Option<PathBuf>,
+}
+
+/// The thread a command reads: `-t`, else the one this session is attached to.
+#[derive(Args, Debug)]
+struct Target {
+    #[arg(
+        short = 't',
+        long = "thread",
+        value_name = "NAME",
+        help = "the thread [default: the one this session is attached to]"
+    )]
+    thread: Option<String>,
+    #[command(flatten)]
+    session: Session,
 }
 
 /// A session a command names.
@@ -152,6 +191,10 @@ impl Current {
                 _ => None,
             })
     }
+
+    fn is(&self, b: &Binding) -> bool {
+        b.harness == self.harness && b.session == self.session
+    }
 }
 
 fn claude_config() -> Option<PathBuf> {
@@ -170,30 +213,25 @@ impl Cli {
 
     pub fn run(self, cwd: &Path, out: &mut dyn Write) -> Result<ExitCode> {
         match self.command {
-            Command::Claude { name, args } => launch(cwd, &name, &args),
-            Command::Resume {
-                name: Some(name),
-                args,
-                ..
-            } => resume(cwd, &name, &args),
-            Command::Resume {
-                name: None,
-                part,
-                at,
-                session,
-                ..
-            } => match session.current() {
-                Some(c) => view(cwd, out, &c, part.unwrap_or(1), at.as_deref()),
-                None => list(cwd, out),
-            },
+            Command::Start { name, args } => launch(cwd, &name, &args),
+            Command::Resume { name, args } => resume(cwd, &name, &args),
+            Command::List { session } => list(cwd, out, session),
+            Command::View { target, part, at } => {
+                view(cwd, out, target, part.unwrap_or(1), at.as_deref())
+            }
             Command::Attach { name, session } => attach(cwd, out, &name, session),
             Command::Detach { session } => detach(cwd, out, session),
-            Command::Zoom { id, part, session } => {
-                zoom_cmd(cwd, out, &id, part.unwrap_or(1), session)
+            Command::Zoom { target, id, part } => {
+                zoom_cmd(cwd, out, target, &id, part.unwrap_or(1))
             }
-            Command::Sync { session } => sync(cwd, session),
-            Command::Compact { session } => compact(cwd, out, session),
-            Command::Nap { thread } => nap_cmd(cwd, out, &thread),
+            Command::Summarise {
+                target,
+                rebuild,
+                model,
+                dry_run,
+            } => summarise_cmd(cwd, out, target, rebuild, model.as_deref(), dry_run),
+            Command::SyncSession { session } => sync_session(cwd, session),
+            Command::CompactSession { session } => compact_session(cwd, out, session),
         }
     }
 }
@@ -207,48 +245,41 @@ fn find(cwd: &Path) -> Result<Chat> {
     Chat::find(cwd)?.context("Not in a git repository: ai chat keeps its threads in one.")
 }
 
-/// The thread session `c` is attached to, with its binding; none outside a repository.
-fn attached(cwd: &Path, c: &Current) -> Result<Option<(Thread, Binding)>> {
-    match Chat::find(cwd)? {
-        Some(chat) => chat.attached(&c.harness, &c.session),
-        None => Ok(None),
-    }
-}
-
-/// Starts the thread's background compactor, unless `ai.chat.nap` is false.
-fn start_nap(cwd: &Path, thread: &str) -> Result<()> {
+/// The thread `-t` names, else the one the session is attached to; with the session's binding
+/// when the session is attached to it.
+fn pick(cwd: &Path, t: Target) -> Result<(Chat, Thread, Option<Binding>)> {
     let chat = find(cwd)?;
-    chat.spawn_nap(&chat.thread(thread)?)?;
-    Ok(())
-}
-
-/// The thread's compactor, here: what it built and what failed.
-fn nap_cmd(cwd: &Path, out: &mut dyn Write, name: &str) -> Result<ExitCode> {
-    let chat = find(cwd)?;
-    let t = chat.thread(name)?;
-    let Some(b) = nap(&t, chat.backend()?)? else {
-        writeln!(
-            out,
-            "A compactor is already running; it will build these too."
-        )?;
-        return Ok(ExitCode::SUCCESS);
+    let current = t.session.current();
+    let attached = match &current {
+        Some(c) => chat.attached(&c.harness, &c.session)?,
+        None => None,
     };
-    for (k, e) in &b.failed {
-        writeln!(out, "Failed {k}: {e}")?;
+    match t.thread {
+        Some(name) => {
+            let thread = chat.thread(&name)?;
+            if !thread.exists()? {
+                bail!("No thread {name} in this repository. List them: ai chat list");
+            }
+            let binding = attached.filter(|(a, _)| a.name() == name).map(|(_, b)| b);
+            Ok((chat, thread, binding))
+        }
+        None => match (attached, current) {
+            (Some((thread, b)), _) => Ok((chat, thread, Some(b))),
+            (None, Some(_)) => bail!(
+                "This session is not attached to a thread. Attach it with `ai chat attach <name>`, or name a thread with -t."
+            ),
+            (None, None) => bail!(
+                "Name a thread with -t: this is not a harness session. List them: ai chat list"
+            ),
+        },
     }
-    match b.lines {
-        0 => writeln!(out, "Nothing built.")?,
-        n => writeln!(
-            out,
-            "Built {}, {} by the model.",
-            plural(n, "line"),
-            b.calls
-        )?,
-    }
-    Ok(match b.failed.is_empty() {
-        true => ExitCode::SUCCESS,
-        false => ExitCode::FAILURE,
-    })
+}
+
+/// Starts the thread's background summariser, unless `ai.chat.summarise` is false.
+fn start_summariser(cwd: &Path, thread: &str) -> Result<()> {
+    let chat = find(cwd)?;
+    chat.spawn_summariser(&chat.thread(thread)?)?;
+    Ok(())
 }
 
 /// A random (version 4) UUID, as Claude Code's session ids.
@@ -268,9 +299,12 @@ fn uuid() -> Result<String> {
     ))
 }
 
-/// Runs `claude args`, in place of this process.
-fn exec_claude(args: &[&str]) -> Result<ExitCode> {
-    let e = process::Command::new("claude").args(args).exec();
+/// Runs `claude args` in `dir`, in place of this process.
+fn exec_claude(dir: &Path, args: &[&str]) -> Result<ExitCode> {
+    let e = process::Command::new("claude")
+        .args(args)
+        .current_dir(dir)
+        .exec();
     Err(e).context("Cannot start claude.")
 }
 
@@ -287,15 +321,16 @@ fn launch(cwd: &Path, name: &str, args: &[String]) -> Result<ExitCode> {
     chat.attach(name, claude::HARNESS, &session, Some(&path))?;
     let mut argv = vec!["--session-id", &session];
     argv.extend(args.iter().map(String::as_str));
-    exec_claude(&argv)
+    exec_claude(cwd, &argv)
 }
 
-/// The thread's newest Claude Code session, resumed attached when it can be; else a new one.
+/// The thread's newest Claude Code session, resumed attached in the directory it ran in when
+/// it can be; else a new one.
 fn resume(cwd: &Path, name: &str, args: &[String]) -> Result<ExitCode> {
     let chat = find(cwd)?;
     let t = chat.thread(name)?;
     if !t.exists()? {
-        bail!("No thread {name}. Start one: ai chat claude {name}");
+        bail!("No thread {name} in this repository. Start one: ai chat start {name}");
     }
     let newest = t
         .snapshot()?
@@ -303,46 +338,75 @@ fn resume(cwd: &Path, name: &str, args: &[String]) -> Result<ExitCode> {
         .into_iter()
         .filter(|b| b.harness == claude::HARNESS)
         .max_by_key(|b| (b.tip, b.attached));
-    let here = claude::project_dir(cwd);
     let why = match &newest {
         None => "it has no Claude Code session".to_string(),
         Some(b) => match &b.transcript {
-            Some(p) if !p.is_file() => format!("the transcript of session {} is gone", b.session),
-            Some(p)
-                if p.parent()
-                    .and_then(Path::file_name)
-                    .is_some_and(|d| d == here.as_str()) =>
-            {
-                chat.attach(name, claude::HARNESS, &b.session, Some(p))?;
-                let mut argv = vec!["--resume", &b.session];
-                argv.extend(args.iter().map(String::as_str));
-                return exec_claude(&argv);
-            }
-            Some(_) => format!("session {} ran in another directory", b.session),
+            Some(p) if p.is_file() => match claude::session_dir(p) {
+                Some(dir) if chat.holds(&dir) => {
+                    chat.attach(name, claude::HARNESS, &b.session, Some(p))?;
+                    let mut argv = vec!["--resume", &b.session];
+                    argv.extend(args.iter().map(String::as_str));
+                    return exec_claude(&dir, &argv);
+                }
+                Some(dir) => format!(
+                    "session {} ran in {}, outside this repository",
+                    b.session,
+                    file::pretty(&dir)
+                ),
+                None => format!("the transcript of session {} names no directory", b.session),
+            },
+            Some(_) => format!("the transcript of session {} is gone", b.session),
             None => format!("session {} has no transcript", b.session),
         },
     };
-    eprintln!("Cannot resume {name} here: {why}. Starting a new session.");
+    eprintln!("Cannot resume {name}: {why}. Starting a new session.");
     launch(cwd, name, args)
 }
 
-/// Every thread: name, the harness and time of its newest item, its branches.
-fn list(cwd: &Path, out: &mut dyn Write) -> Result<ExitCode> {
+/// Every thread: its exchanges, newest activity and branches; under it, its sessions.
+fn list(cwd: &Path, out: &mut dyn Write, s: Session) -> Result<ExitCode> {
     let threads = find(cwd)?.list()?;
     if threads.is_empty() {
-        writeln!(out, "No threads here. Start one: ai chat claude <name>")?;
+        writeln!(
+            out,
+            "No threads in this repository. Start one: ai chat start <name>"
+        )?;
+        return Ok(ExitCode::SUCCESS);
     }
-    let w = threads.iter().map(|t| t.name.len()).max().unwrap_or(0);
+    let current = s.current();
+    let when = |ts: &jiff::Timestamp| ts.strftime("%Y-%m-%d %H:%M").to_string();
     for t in threads {
-        let (harness, when) = match &t.newest {
-            Some(h) => (
-                h.harness.clone(),
-                h.ts.strftime("%Y-%m-%d %H:%M").to_string(),
-            ),
-            None => ("-".into(), "-".into()),
+        let last = t.newest.as_ref().map_or("-".into(), |h| when(&h.ts));
+        let branches = match t.tips.len() {
+            0 | 1 => String::new(),
+            n => format!("  {n} branches"),
         };
-        let branches = plural(t.tips.len() as u64, "branch");
-        writeln!(out, "{:<w$}  {harness:<6}  {when:<16}  {branches}", t.name)?;
+        writeln!(
+            out,
+            "{}  {}  {last}{branches}",
+            t.name,
+            plural(t.exchanges as u64, "turn")
+        )?;
+        let wh = t.sessions.iter().map(|(b, _)| b.harness.len()).max();
+        let ws = t.sessions.iter().map(|(b, _)| b.session.len()).max();
+        let (wh, ws) = (wh.unwrap_or(0), ws.unwrap_or(0));
+        for (b, at) in &t.sessions {
+            let state = match b.is_attached() {
+                true => "attached",
+                false => "detached",
+            };
+            let here = match current.as_ref().is_some_and(|c| c.is(b)) {
+                true => "  this session",
+                false => "",
+            };
+            writeln!(
+                out,
+                "  {:<wh$}  {:<ws$}  {state}  {}{here}",
+                b.harness,
+                b.session,
+                when(at)
+            )?;
+        }
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -361,23 +425,23 @@ fn attach(cwd: &Path, out: &mut dyn Write, name: &str, s: Session) -> Result<Exi
     }
     writeln!(out, "{msg}.")?;
     if !a.added.is_empty() {
-        start_nap(cwd, &a.thread)?;
+        start_summariser(cwd, &a.thread)?;
     }
     Ok(ExitCode::SUCCESS)
 }
 
 fn detach(cwd: &Path, out: &mut dyn Write, s: Session) -> Result<ExitCode> {
-    let (Some(c), Some(chat)) = (s.current(), Chat::find(cwd)?) else {
-        return not_attached();
+    let Some(c) = s.current() else {
+        bail!("No session: run this inside a harness session, or pass --session.");
     };
-    match chat.detach(&c.harness, &c.session)? {
+    match find(cwd)?.detach(&c.harness, &c.session)? {
         Some(t) => writeln!(out, "Detached from {t}.")?,
-        None => return not_attached(),
+        None => bail!("This session is not attached to a thread."),
     }
     Ok(ExitCode::SUCCESS)
 }
 
-fn sync(cwd: &Path, s: Session) -> Result<ExitCode> {
+fn sync_session(cwd: &Path, s: Session) -> Result<ExitCode> {
     let Some(c) = s.current() else {
         return not_attached();
     };
@@ -385,7 +449,7 @@ fn sync(cwd: &Path, s: Session) -> Result<ExitCode> {
         Synced::NotAttached => not_attached(),
         Synced::Attached { thread, added } => {
             if !added.is_empty() {
-                start_nap(cwd, &thread)?;
+                start_summariser(cwd, &thread)?;
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -394,7 +458,7 @@ fn sync(cwd: &Path, s: Session) -> Result<ExitCode> {
 
 /// Sync, the lines the view needs built within [`WAIT`], then the view; nothing for a session
 /// whose branch holds no item yet.
-fn compact(cwd: &Path, out: &mut dyn Write, s: Session) -> Result<ExitCode> {
+fn compact_session(cwd: &Path, out: &mut dyn Write, s: Session) -> Result<ExitCode> {
     let (Some(c), Some(chat)) = (s.current(), Chat::find(cwd)?) else {
         return not_attached();
     };
@@ -411,24 +475,23 @@ fn compact(cwd: &Path, out: &mut dyn Write, s: Session) -> Result<ExitCode> {
     let mut branch = Branch::load(&t.snapshot()?, tip)?;
     let keys = branch.needed(t.name());
     if !keys.is_empty() {
-        build(&t, chat.backend()?, &keys, Instant::now() + WAIT)?;
+        build(&t, chat.backend(None)?, &keys, Instant::now() + WAIT)?;
         branch = Branch::load(&t.snapshot()?, tip)?;
     }
     write!(out, "{}", branch.view(t.name()))?;
     Ok(ExitCode::SUCCESS)
 }
 
-/// The view of the session's thread, in parts from one commit of it.
+/// The thread's view, in parts from one commit of it: of the session's branch when the
+/// session is attached to it, else of its newest branch.
 fn view(
     cwd: &Path,
     out: &mut dyn Write,
-    c: &Current,
+    target: Target,
     part: u64,
     at: Option<&str>,
 ) -> Result<ExitCode> {
-    let Some((t, _)) = attached(cwd, c)? else {
-        return not_attached();
-    };
+    let (_, t, binding) = pick(cwd, target)?;
     let snap = match at {
         Some(at) => {
             let id = ObjectId::from_hex(at.as_bytes())
@@ -438,18 +501,27 @@ fn view(
         }
         None => t.snapshot()?,
     };
-    let Some(b) = snap.binding(&c.harness, &c.session)? else {
-        return not_attached();
+    let session = match &binding {
+        Some(b) => snap.binding(&b.harness, &b.session)?,
+        None => None,
     };
-    let commit = snap.as_ref().commit().context("The thread is empty.")?;
-    let text = Branch::load(&snap, b.tip.or(b.graft))?.view(t.name());
+    let tip = match session {
+        Some(b) => b.tip.or(b.graft),
+        None => snap.tips()?.last().copied(),
+    };
+    let (Some(commit), Some(_)) = (snap.as_ref().commit(), tip) else {
+        writeln!(out, "Thread {} holds nothing yet.", t.name())?;
+        return Ok(ExitCode::SUCCESS);
+    };
+    let text = Branch::load(&snap, tip)?.view(t.name());
     let (text, n) = page(&text, PART, part)?;
     writeln!(out, "{}", text.strip_suffix('\n').unwrap_or(text))?;
     if part < n {
         let next = part + 1;
         writeln!(
             out,
-            "Part {part} of {n}. Next: ai chat resume --part {next} --at {commit}"
+            "Part {part} of {n}. Next: ai chat view -t {} --part {next} --at {commit}",
+            t.name()
         )?;
     } else if n > 1 {
         writeln!(out, "Part {part} of {n}, the last.")?;
@@ -457,13 +529,14 @@ fn view(
     Ok(ExitCode::SUCCESS)
 }
 
-fn zoom_cmd(cwd: &Path, out: &mut dyn Write, id: &str, part: u64, s: Session) -> Result<ExitCode> {
-    let Some(c) = s.current() else {
-        return not_attached();
-    };
-    let Some((t, _)) = attached(cwd, &c)? else {
-        return not_attached();
-    };
+fn zoom_cmd(
+    cwd: &Path,
+    out: &mut dyn Write,
+    target: Target,
+    id: &str,
+    part: u64,
+) -> Result<ExitCode> {
+    let (_, t, _) = pick(cwd, target)?;
     let Some(parsed) = Id::parse(id) else {
         bail!("'{id}' is not a line id. Copy one from the view, like 120-245 or 7.");
     };
@@ -475,11 +548,91 @@ fn zoom_cmd(cwd: &Path, out: &mut dyn Write, id: &str, part: u64, s: Session) ->
     if part < n {
         writeln!(
             out,
-            "Part {part} of {n}. Next: ai chat zoom {parsed} {}",
+            "Part {part} of {n}. Next: ai chat zoom -t {} {parsed} {}",
+            t.name(),
             part + 1
         )?;
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Writes the thread's ready lines, or with `again` rewrites them all; with `dry`, prints
+/// what it would write and stores nothing.
+fn summarise_cmd(
+    cwd: &Path,
+    out: &mut dyn Write,
+    target: Target,
+    again: bool,
+    model: Option<&str>,
+    dry: bool,
+) -> Result<ExitCode> {
+    let (chat, t, _) = pick(cwd, target)?;
+    let backend = chat.backend(model)?;
+    let built = match (dry, again) {
+        (true, _) => {
+            let d = dry_run(&t, backend, again)?;
+            for l in &d.lines {
+                let id = Id {
+                    first: l.first,
+                    last: l.key.last,
+                };
+                writeln!(out, "{id}|{}", l.text)?;
+                if let Some(was) = &l.was {
+                    writeln!(out, "  was: {was}")?;
+                }
+            }
+            writeln!(
+                out,
+                "Dry run: {}, {} by the model; nothing stored.",
+                plural(d.built.lines, "line"),
+                d.built.calls
+            )?;
+            d.built
+        }
+        (false, true) => {
+            let Some((dropped, b)) = rebuild(&t, backend, Instant::now() + WAIT)? else {
+                bail!(
+                    "A summariser is still running on {}. Try again when it ends.",
+                    t.name()
+                );
+            };
+            writeln!(
+                out,
+                "Dropped {}; wrote {}, {} by the model.",
+                plural(dropped as u64, "line"),
+                b.lines,
+                b.calls
+            )?;
+            b
+        }
+        (false, false) => {
+            let Some(b) = summarise(&t, backend)? else {
+                writeln!(
+                    out,
+                    "A summariser is already running on {}; it writes these lines too.",
+                    t.name()
+                )?;
+                return Ok(ExitCode::SUCCESS);
+            };
+            match b.lines {
+                0 => writeln!(out, "Nothing to write.")?,
+                n => writeln!(
+                    out,
+                    "Wrote {}, {} by the model.",
+                    plural(n, "line"),
+                    b.calls
+                )?,
+            }
+            b
+        }
+    };
+    for (k, e) in &built.failed {
+        writeln!(out, "Failed {k}: {e}")?;
+    }
+    Ok(match built.failed.is_empty() {
+        true => ExitCode::SUCCESS,
+        false => ExitCode::FAILURE,
+    })
 }
 
 #[cfg(test)]

@@ -31,11 +31,11 @@ Items
 
 Lines
 - `put_line`: first write wins and returns the stored line; a key past the last item is refused. Kind (`chunk`, `exchange`, `node`) and who wrote it (`memory::Who`: agent, model, session) are stored with the text; the level numbering is the roll-up's (rollup.rs.md).
-- `put_lines`: the same for many lines in one commit (`line <key>` for one, `<n> lines` for more): the compactor writes each round of free lines at once, so a first nap over a long history does not make a commit per short exchange.
+- `put_lines`: the same for many lines in one commit (`line <key>` for one, `<n> lines` for more): the compactor writes each round of free lines at once, so a first summariser over a long history does not make a commit per short exchange.
 - `all_lines`: every line by key, one walk per level directory; the compactor reads it once per pass.
 
 Queries
-- `Chat::list`: per thread its newest item (harness, session, time) and tips, from the index only. `Snapshot::tree` and `model::Tree::path`/`branch` give the item tree and the path to a tip; `Snapshot::tip(harness, session)` the newest tip of a session; `Snapshot::line`/`lines` lines by key and by level.
+- `Chat::list`: per thread its newest item (harness, session, time) and tips from the index; its turns (exchanges on the newest branch, from the tree) and its sessions, each with the time of its newest item (else of its attaching), newest first. `Chat::holds(dir)`: `dir` is in this repository (gix discover from it reaches the same canonical common git dir). `Thread::drop_lines`: removes the `lines` tree in one commit (`Changes::remove`), for `summarise --rebuild`. `Snapshot::tree` and `model::Tree::path`/`branch` give the item tree and the path to a tip; `Snapshot::tip(harness, session)` the newest tip of a session; `Snapshot::line`/`lines` lines by key and by level.
 - `Thread::snapshot_at`: the thread as of one of its commits (`Snapshot::as_ref().commit()`), so the parts of a paged view all read one state.
 - A `Snapshot` borrows its `Thread`: bind the thread first (`let t = chat.thread(name)?; let s = t.snapshot()?;`).
 

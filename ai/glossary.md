@@ -8,9 +8,9 @@
 - `free node`: a source that fits `NODE` is its own node, no model call: a short message (`kind: text`), or two lines joined. Built in the same commit that completes its sources.
 - `view`: the nodes tiling `[0, T)`, oldest first, under `VIEW` = 128,000 bytes; grows by appending and merging the most due pair, never splits; folded again from message 0 at load. `wake` prints it.
 - `placeholder`: `(not summarized yet: zoom it)`, the view line of a message whose level-0 node is not built.
-- `compactor`: builds nodes with a model, in rule-3 order (messages one at a time, merges alongside), `JOBS` = 8 at once, size retries, fixed 10 s retry. One per memory (`compact.lock`). Runs as `ai memory nap`.
+- `compactor`: builds nodes with a model, in rule-3 order (messages one at a time, merges alongside), `JOBS` = 8 at once, size retries, fixed 10 s retry. One per memory (`compact.lock`). Runs as `ai memory summarise`.
 - `rule 3`: a node is built only when every view line before its end is already a summary, so the compactor never sees a placeholder.
-- `nap`: `ai memory nap`: run the compactor until nothing is buildable, then exit. `note` starts one in the background when a node is due.
+- `summarise` (memory): `ai memory summarise`: run the compactor until nothing is buildable, then exit. `note` starts one in the background when a node is due.
 - `backend`: the compactor's model access (`Backend`/`Conversation`); now only Claude Code (`claude -p`, Sonnet, medium effort).
 - `wake`: print the view under date headers, paged into parts; `wake <id>` reads on from message `id`, as each part's last line says.
 - `part`: one page of `wake` output, bounded by `PART_CHARS`/`PART_LINES`.
@@ -44,15 +44,17 @@
 - `tip` (of a session): the item of its transcript's newest entry, the end of its branch.
 - `line` (chat): a summary in a thread, keyed by its level and the last item it covers (`level@last`), of kind chunk, exchange or node; written once.
 - `sync` (chat): ingest an attached session's new entries into its thread in one commit, none if nothing is new; an unattached session is reported as such.
-- `view` (chat): what `ai chat compact` and in-session `ai chat resume` print for a session, at most `VIEW` = 128,000 bytes: an instruction, the fold, the user rail, the open exchange. Computed fresh each time; nothing about it is stored.
+- `view` (chat): what `ai chat compact-session` and `ai chat view` print for a session, at most `VIEW` = 128,000 bytes: an instruction, the fold, the user rail, the open exchange. Computed fresh each time; nothing about it is stored.
 - `fold` (chat): the closed exchanges of a session's branch in lines, oldest coarsest: from one line per exchange, the most due aligned pair merges first, due = (T − last)/2^l, until the lines fit. An unbuilt line shows what is built under it, else a placeholder.
 - `line id` (chat): `a-b`, the items a to b along the branch to b; `n`, item n. What `ai chat zoom` takes.
 - `user rail`: the newest user messages of closed exchanges, word for word, about 8 KB, after the fold.
 - `open exchange`: a branch's last exchange, not yet closed; the view shows its message, chunk lines and newest steps raw (`OPEN` = 32,000 bytes).
 - `placeholder` (chat): `a-b|(not summarized yet: zoom a-b)`, a line the roll-up has not built; `(not shown: zoom a-b)`, the steps of the open exchange left out for room.
-- `launcher`: `ai chat claude <name> [-- args]`: a new session id bound to the thread with its future transcript, then `exec claude --session-id`.
-- `seed` (chat): the view a launched session of an existing thread starts with, its only context: the plugin's `SessionStart` (`startup`) context, from `ai chat compact`. Kept in the transcript, so a resume replays it; a compaction replaces it.
+- `launcher`: `ai chat start <name> [-- args]`: a new session id bound to the thread with its future transcript, then `exec claude --session-id`.
+- `seed` (chat): the view a launched session of an existing thread starts with, its only context: the plugin's `SessionStart` (`startup`) context, from `ai chat compact-session`. Kept in the transcript, so a resume replays it; a compaction replaces it.
 - `roll-up`: a thread's lines and what each is made from (`chat::Rollup`), over every branch: chunk lines (level 0), exchange lines of closed exchanges (1), binary nodes over aligned pairs of closed exchanges along the branch (1+k). Built by the chat compactor.
 - `chunk`: consecutive steps of an exchange whose rendering is over `INPUT` (48 KB), cut greedily at step boundaries (an over-budget step before its tool calls); final once another chunk follows it. Its call reads the exchange's message as context.
 - `free line` (chat): a line whose input fits 512 B is that input, flattened, with no model call.
-- `nap` (chat): `ai chat nap --thread <name>`: the thread's background compactor, one per thread (its lock), building every ready line until none is; `sync` starts it unless `ai.chat.nap` is false.
+- `summarise` (chat): `ai chat summarise -t <name>`: the thread's summariser, one per thread (its lock), building every ready line until none is; `sync-session` starts it in the background unless `ai.chat.summarise` is false. `--rebuild` drops every line and writes them again; `--dry-run` prints what it would write and stores nothing; `--model` picks the model for the run.
+- `porcelain`: a command for users and agents (git's term): listed in help, errors worded as what to do.
+- `plumbing`: a command for harness glue, at least two words, hidden from help: `ai chat sync-session`, `ai chat compact-session`, `ai memory prompt-hook`.

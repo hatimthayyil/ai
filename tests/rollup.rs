@@ -12,7 +12,10 @@ use std::{
 };
 
 use ai_tools::{
-    chat::{Built, Chat, Key, Line, LineKind, Rollup, Source, Thread, build, nap, rollup},
+    chat::{
+        Built, Chat, Key, Line, LineKind, Rollup, Source, Thread, build, dry_run, rebuild, rollup,
+        summarise,
+    },
     memory::{Backend, Block, Conversation, JOBS, NODE, SCALE, claude},
 };
 use anyhow::{Result, bail};
@@ -252,8 +255,10 @@ fn key(level: u32, last: u64) -> Key {
     Key { level, last }
 }
 
-fn napped(t: &Thread, fake: &Arc<Fake>) -> Built {
-    nap(t, fake.backend()).unwrap().expect("the lock is free")
+fn summarised(t: &Thread, fake: &Arc<Fake>) -> Built {
+    summarise(t, fake.backend())
+        .unwrap()
+        .expect("the lock is free")
 }
 
 fn head(r: &Repo) -> String {
@@ -275,7 +280,7 @@ fn short_exchanges_and_their_nodes_are_free_lines() {
     s.user("bye");
     let t = r.thread(&s);
     let fake = Fake::new();
-    let built = napped(&t, &fake);
+    let built = summarised(&t, &fake);
     assert_eq!(fake.calls(), 0);
     assert_eq!((built.lines, built.calls), (3, 0));
     let l = lines(&t);
@@ -331,7 +336,7 @@ fn every_level_is_built_and_only_once() {
     );
 
     let fake = Fake::new();
-    let built = napped(&t, &fake);
+    let built = summarised(&t, &fake);
     let want = [
         (
             chunks[0].to_string(),
@@ -397,7 +402,7 @@ fn every_level_is_built_and_only_once() {
 }
 
 #[test]
-fn a_second_nap_finds_nothing_to_build() {
+fn a_second_summariser_finds_nothing_to_build() {
     let r = Repo::new();
     let mut s = Script::new();
     for k in 0..5 {
@@ -406,10 +411,10 @@ fn a_second_nap_finds_nothing_to_build() {
     s.user("open");
     let t = r.thread(&s);
     let fake = Fake::new();
-    assert_eq!(napped(&t, &fake).calls, 5 + 2 + 1);
+    assert_eq!(summarised(&t, &fake).calls, 5 + 2 + 1);
     let (before, at) = (texts(&t), head(&r));
     let again = Fake::new();
-    assert_eq!(napped(&t, &again), Built::default());
+    assert_eq!(summarised(&t, &again), Built::default());
     assert_eq!(again.calls(), 0);
     assert_eq!((texts(&t), head(&r)), (before, at), "no commit");
     let keys: Vec<Key> = lines(&t).into_keys().collect();
@@ -447,7 +452,7 @@ fn branches_share_the_lines_of_their_common_prefix() {
     assert_eq!(b, [key(1, e0), key(1, e1), key(1, b2), key(1, b3)]);
 
     let fake = Fake::new();
-    napped(&t, &fake);
+    summarised(&t, &fake);
     let got: Vec<Key> = lines(&t).into_keys().collect();
     let mut want = vec![
         key(1, e0),
@@ -483,7 +488,7 @@ fn an_open_exchange_gets_its_finished_chunks() {
     assert_eq!(keys.len(), 2, "two full chunks; the third may grow");
     assert!(keys[1].last < last);
     let fake = Fake::new();
-    assert_eq!(napped(&t, &fake).calls, 2);
+    assert_eq!(summarised(&t, &fake).calls, 2);
     assert_eq!(lines(&t).into_keys().collect::<Vec<_>>(), keys);
 }
 
@@ -543,7 +548,7 @@ fn build_returns_at_its_deadline() {
 }
 
 #[test]
-fn a_held_lock_makes_a_second_nap_exit_at_once() {
+fn a_held_lock_makes_a_second_summariser_exit_at_once() {
     let r = Repo::new();
     let mut s = Script::new();
     s.exchange(0);
@@ -551,12 +556,12 @@ fn a_held_lock_makes_a_second_nap_exit_at_once() {
     let t = r.thread(&s);
     let fake = Fake::new();
     let lock = t.try_lock().unwrap().expect("free");
-    assert_eq!(nap(&t, fake.backend()).unwrap(), None);
+    assert_eq!(summarise(&t, fake.backend()).unwrap(), None);
     assert_eq!(fake.calls(), 0);
     let other = r.chat().thread("t").unwrap();
     assert!(other.try_lock().unwrap().is_none());
     lock.unlock().unwrap();
-    assert_eq!(napped(&t, &fake).calls, 1);
+    assert_eq!(summarised(&t, &fake).calls, 1);
     let log = fs::read_to_string(t.log_path().unwrap()).unwrap();
     assert!(
         log.contains("busy") && log.contains("built") && log.contains(" end"),
@@ -565,7 +570,7 @@ fn a_held_lock_makes_a_second_nap_exit_at_once() {
 }
 
 #[test]
-fn build_waits_for_a_running_nap_and_calls_for_nothing_it_built() {
+fn build_waits_for_a_running_summariser_and_calls_for_nothing_it_built() {
     let r = Repo::new();
     let mut s = Script::new();
     for k in 0..3 {
@@ -578,11 +583,11 @@ fn build_waits_for_a_running_nap_and_calls_for_nothing_it_built() {
         .branch(&tree, *tree.tips().last().unwrap())
         .lines();
     let slow = Fake::with(Duration::from_millis(300), |_| false);
-    let napping = {
+    let summarising = {
         let (path, slow) = (r.path(), slow.clone());
         thread::spawn(move || {
             let t = Chat::find(&path).unwrap().unwrap().thread("t").unwrap();
-            nap(&t, slow.backend()).unwrap()
+            summarise(&t, slow.backend()).unwrap()
         })
     };
     while slow.calls() == 0 {
@@ -597,8 +602,11 @@ fn build_waits_for_a_running_nap_and_calls_for_nothing_it_built() {
         at.elapsed()
     );
     assert_eq!((b, fast.calls()), (Built::default(), 0));
-    let napped = napping.join().unwrap().expect("the nap held the lock");
-    assert_eq!(napped.calls as usize, slow.calls(), "one call per line");
+    let summarised = summarising
+        .join()
+        .unwrap()
+        .expect("the summariser held the lock");
+    assert_eq!(summarised.calls as usize, slow.calls(), "one call per line");
     let built = lines(&t);
     assert!(keys.iter().all(|k| built.contains_key(k)), "{built:?}");
 }
@@ -639,7 +647,94 @@ fn build_gives_up_on_a_lock_held_past_its_deadline() {
 }
 
 #[test]
-fn failed_lines_stay_unbuilt_and_a_failing_model_stops_the_nap() {
+fn a_dry_run_builds_in_memory_and_stores_nothing() {
+    let r = Repo::new();
+    let mut s = Script::new();
+    let e0 = s.exchange(0);
+    let e1 = s.exchange(1);
+    s.user("open");
+    let t = r.thread(&s);
+    let old = Fake::new();
+    assert_eq!(summarised(&t, &old).calls, 3);
+    let (before, at) = (texts(&t), head(&r));
+
+    let fake = Fake::new();
+    let d = dry_run(&t, fake.backend(), false).unwrap();
+    assert_eq!(
+        (d.built, d.lines.len(), fake.calls()),
+        (Built::default(), 0, 0)
+    );
+
+    let d = dry_run(&t, fake.backend(), true).unwrap();
+    assert_eq!((d.built.lines, d.built.calls, fake.calls()), (3, 3, 3));
+    let got: Vec<(u64, Key, bool)> = d
+        .lines
+        .iter()
+        .map(|l| {
+            (
+                l.first,
+                l.key,
+                l.was.as_deref() == Some(&before[&l.key.to_string()]),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (0, key(1, e0), true),
+            (2, key(1, e1), true),
+            (0, key(2, e1), true)
+        ]
+    );
+    assert!(
+        d.lines
+            .iter()
+            .all(|l| l.text.starts_with("exchange ") || l.text.starts_with("merge "))
+    );
+    assert_eq!((texts(&t), head(&r)), (before, at), "nothing stored");
+}
+
+#[test]
+fn rebuild_drops_every_line_and_writes_them_again() {
+    let r = Repo::new();
+    let mut s = Script::new();
+    for k in 0..3 {
+        s.exchange(k);
+    }
+    s.user("open");
+    let t = r.thread(&s);
+    let fake = Fake::new();
+    let first = summarised(&t, &fake).calls;
+    let before = texts(&t);
+    let again = Fake::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let (dropped, b) = rebuild(&t, again.backend(), deadline)
+        .unwrap()
+        .expect("the lock is free");
+    assert_eq!(dropped, before.len());
+    assert_eq!((b.calls, again.calls() as u64), (first, first));
+    assert_eq!(
+        texts(&t).into_keys().collect::<Vec<_>>(),
+        before.into_keys().collect::<Vec<_>>()
+    );
+
+    let held = t.try_lock().unwrap().expect("free");
+    let at = Instant::now();
+    assert_eq!(
+        rebuild(&t, again.backend(), at + Duration::from_millis(200)).unwrap(),
+        None
+    );
+    assert!(at.elapsed() >= Duration::from_millis(200));
+    assert_eq!(
+        texts(&t).len(),
+        dropped,
+        "nothing dropped while the lock is held"
+    );
+    held.unlock().unwrap();
+}
+
+#[test]
+fn failed_lines_stay_unbuilt_and_a_failing_model_stops_the_summariser() {
     let r = Repo::new();
     let mut s = Script::new();
     let e0 = s.exchange(0);
@@ -649,7 +744,7 @@ fn failed_lines_stay_unbuilt_and_a_failing_model_stops_the_nap() {
     s.user("open");
     let t = r.thread(&s);
     let fake = Fake::with(Duration::from_millis(2), |t| t.contains("poison"));
-    let b = napped(&t, &fake);
+    let b = summarised(&t, &fake);
     assert_eq!(b.failed.len(), 1);
     assert_eq!(b.failed[0].0, key(1, e1));
     assert!(b.failed[0].1.contains("fake failure"));
@@ -667,7 +762,7 @@ fn failed_lines_stay_unbuilt_and_a_failing_model_stops_the_nap() {
     s.user("open");
     let t = r.thread(&s);
     let dead = Fake::with(Duration::from_millis(2), |_| true);
-    let b = napped(&t, &dead);
+    let b = summarised(&t, &dead);
     assert_eq!((b.lines, b.failed.len()), (0, dead.calls()));
     assert!(
         (JOBS..2 * JOBS).contains(&dead.calls()),
@@ -677,24 +772,27 @@ fn failed_lines_stay_unbuilt_and_a_failing_model_stops_the_nap() {
 }
 
 #[test]
-fn config_sets_the_model_and_switches_the_nap_off() {
+fn config_sets_the_model_and_switches_the_summariser_off() {
     let r = Repo::new();
     let chat = r.chat();
     let c = chat.config().unwrap();
-    assert_eq!((c.model, c.nap), (claude::model(), true));
+    assert_eq!((c.model, c.summarise), (claude::model(), true));
     r.git(&["config", "ai.chat.model", "haiku"]);
-    r.git(&["config", "ai.chat.nap", "false"]);
+    r.git(&["config", "ai.chat.summarise", "false"]);
     let chat = r.chat();
     let c = chat.config().unwrap();
-    assert_eq!((c.model.as_str(), c.nap), ("haiku", false));
+    assert_eq!((c.model.as_str(), c.summarise), ("haiku", false));
     let mut s = Script::new();
     s.user("hi");
     let t = r.thread(&s);
-    assert!(!chat.spawn_nap(&t).unwrap(), "switched off: nothing starts");
-    r.git(&["config", "ai.chat.nap", "maybe"]);
+    assert!(
+        !chat.spawn_summariser(&t).unwrap(),
+        "switched off: nothing starts"
+    );
+    r.git(&["config", "ai.chat.summarise", "maybe"]);
     let err = r.chat().config().unwrap_err();
     assert!(
-        format!("{err:#}").contains("ai.chat.nap is true or false"),
+        format!("{err:#}").contains("ai.chat.summarise is true or false"),
         "{err:#}"
     );
 }

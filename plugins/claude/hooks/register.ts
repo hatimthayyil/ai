@@ -26,23 +26,23 @@ async function session($: EngineInterface): Promise<string[]> {
 }
 
 async function view($: EngineInterface, args: string[], fallback: string): Promise<string | undefined> {
-  const ran = await chat($, ['compact', ...args], LONG_MS)
+  const ran = await chat($, ['compact-session', ...args], LONG_MS)
   if (ran.exitCode === 0 && ran.stdout !== '') return ran.stdout
   if (ran.exitCode !== 0 && ran.exitCode !== NOT_ATTACHED) {
-    $.ui.log(`ai chat compact failed; ${fallback}. ${ran.stderr.trim()}`)
+    $.ui.log(`ai chat compact-session failed; ${fallback}. ${ran.stderr.trim()}`)
   }
   return undefined
 }
 
 async function sync($: EngineInterface, args: string[]): Promise<void> {
-  const ran = await chat($, ['sync', ...args])
-  if (ran.exitCode !== 0 && ran.exitCode !== NOT_ATTACHED) $.ui.log(`ai chat sync failed: ${ran.stderr.trim()}`)
+  const ran = await chat($, ['sync-session', ...args])
+  if (ran.exitCode !== 0 && ran.exitCode !== NOT_ATTACHED) $.ui.log(`ai chat sync-session failed: ${ran.stderr.trim()}`)
 }
 
 function reply(ran: Ran): string {
   if (ran.exitCode === 0) return ran.stdout.trim()
   if (ran.exitCode === NOT_ATTACHED) return 'This session is not attached to an ai chat thread.'
-  return `ai chat failed: ${ran.stderr.trim()}`
+  return ran.stderr.trim() || `ai chat exited with code ${ran.exitCode}.`
 }
 
 function queueCompact($: EngineInterface): void {
@@ -110,7 +110,7 @@ export const register: Register = on => {
   })
 
   on('tool.call', { tool: 'mcp__ai__compress' }, async $ => {
-    const ran = await chat($, ['sync', ...(await session($))])
+    const ran = await chat($, ['sync-session', ...(await session($))])
     if (ran.exitCode !== 0) return { result: reply(ran) }
     queueCompact($)
     return { result: 'Compaction queued for the end of this turn.' }

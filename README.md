@@ -46,12 +46,15 @@ Notes are Markdown files in a git repository at `~/.ai/notes`, or at `$AI_NOTES_
 ### ai chat
 
 ```sh
-ai chat claude dev [-- claude args]  # Claude Code in a new session of thread dev; an existing thread's view is its context
-ai chat resume dev [-- claude args]  # continue dev's newest session
-ai chat resume                       # list the threads here
+ai chat start dev [-- claude args]   # Claude Code in a new session of thread dev; an existing thread's view is its context
+ai chat resume dev [-- claude args]  # continue dev's newest session, in the directory it ran in
+ai chat list                         # the threads here and their sessions
+ai chat view -t dev                  # dev's view
+ai chat zoom -t dev <id>             # open a line of it
+ai chat summarise -t dev             # write its summaries now; --rebuild, --model, --dry-run
 ```
 
-Inside a session, `/ai attach <name>`, `/ai detach` and `/ai compress`; the agent reads its thread with `ai chat resume` and `ai chat zoom <id>`. An attached session's `/compact` and auto-compaction replace its context with the thread's view, not Claude Code's summary. Threads live under `refs/ai/chat/` in the repository; `git config ai.chat.model` picks the summariser's model.
+Inside a session, `/ai attach <name>`, `/ai detach` and `/ai compress`; `-t` defaults to the session's thread, so the agent reads it with `ai chat view` and `ai chat zoom <id>`. An attached session's `/compact` and auto-compaction replace its context with the thread's view, not Claude Code's summary. Threads live under `refs/ai/chat/` in the repository, so each repository has its own; `git config ai.chat.model` picks the summariser's model.
 
 This needs the Claude Code plugin in `share/ai/plugins/claude` of the package (`plugins/claude` here). Load it in every session with the `env` block of `~/.claude/settings.json`:
 

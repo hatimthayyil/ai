@@ -13,7 +13,7 @@ use jiff::Timestamp;
 use crate::{
     chat::{
         claude::Subagent,
-        model::{Item, Kind, SourceId, Tree},
+        model::{Item, Kind, SourceId, Tree, exchanges},
         record::{
             Agent, Binding, COLUMNS, Head, Key, Line, LineKind, check_id, encode_kind, item, word,
         },
@@ -127,6 +127,11 @@ pub struct ThreadInfo {
     /// Its newest item: its harness, session and time.
     pub newest: Option<Head>,
     pub tips: Vec<u64>,
+    /// The exchanges on its newest branch.
+    pub exchanges: usize,
+    /// Its sessions, each with the time of its newest item (else of its attaching), newest
+    /// first.
+    pub sessions: Vec<(Binding, Timestamp)>,
 }
 
 /// The threads of one git repository, in its common git dir, so its worktrees share them.
@@ -176,19 +181,44 @@ impl Chat {
         names.iter().map(|n| self.thread(n)).collect()
     }
 
-    /// Every thread with its newest item and its tips.
+    /// Every thread with its newest item, tips, exchanges and sessions.
     pub fn list(&self) -> Result<Vec<ThreadInfo>> {
         self.threads()?
             .iter()
             .map(|t| {
-                let heads = t.snapshot()?.heads()?;
+                let snap = t.snapshot()?;
+                let heads = snap.heads()?;
+                let tips = tips(&heads);
+                let exchanges = match tips.last() {
+                    Some(&tip) => exchanges(&snap.tree()?.path(tip as usize)).len(),
+                    None => 0,
+                };
+                let mut sessions: Vec<(Binding, Timestamp)> = snap
+                    .bindings()?
+                    .into_iter()
+                    .map(|b| {
+                        let at = b.tip.map_or(b.attached, |t| heads[t as usize].ts);
+                        (b, at)
+                    })
+                    .collect();
+                sessions.sort_by_key(|s| std::cmp::Reverse(s.1));
                 Ok(ThreadInfo {
                     name: t.name.clone(),
-                    tips: tips(&heads),
+                    tips,
                     newest: heads.into_iter().last(),
+                    exchanges,
+                    sessions,
                 })
             })
             .collect()
+    }
+
+    /// Whether `dir` lies in this repository: an existing directory whose repository shares
+    /// this one's common git dir.
+    pub fn holds(&self, dir: &Path) -> bool {
+        let canon = |d: &Path| fs::canonicalize(d).ok();
+        let mine = canon(self.repo.common_dir());
+        mine.is_some() && gix::discover(dir).is_ok_and(|r| canon(r.common_dir()) == mine)
     }
 }
 
@@ -255,6 +285,19 @@ impl Thread {
     fn dir(&self) -> Result<()> {
         let dir = self.lock.parent().expect("a lock in a dir");
         fs::create_dir_all(dir).at(dir)
+    }
+
+    /// Drops every line, in one commit; how many it dropped.
+    pub fn drop_lines(&self) -> Result<usize> {
+        let (n, _) = self.mutate("drop lines", |s| {
+            let n = s.all_lines()?.len();
+            let mut ch = Changes::default();
+            if n > 0 {
+                ch.remove(LINES.into());
+            }
+            Ok((n, ch))
+        })?;
+        Ok(n)
     }
 
     /// Writes the line `key` unless it is built; returns the line stored.

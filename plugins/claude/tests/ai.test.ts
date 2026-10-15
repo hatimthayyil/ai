@@ -75,14 +75,14 @@ test('an attached session compacts into the ai chat view once the transcript is 
   await world.clock.advance(1)
   expect((await compacted).messages).toEqual([{ role: 'user', text: VIEW, toolUses: [] }])
   expect(world.compacts).toEqual([])
-  expect(world.calls).toEqual([['ai', 'chat', 'compact', ...ALL_ARGS]])
+  expect(world.calls).toEqual([['ai', 'chat', 'compact-session', ...ALL_ARGS]])
 })
 
 test('a new session of a thread starts with its view', async ($, on) => {
   const world = engine(on, () => [0, VIEW, ''])
   const result = await start($)
   expect(result.additionalContext).toEqual([PROJECT, VIEW])
-  expect(world.calls).toEqual([['ai', 'chat', 'compact', ...ALL_ARGS]])
+  expect(world.calls).toEqual([['ai', 'chat', 'compact-session', ...ALL_ARGS]])
 })
 
 test('a resumed, cleared, unattached or empty session starts as it would', async ($, on) => {
@@ -102,7 +102,7 @@ test('a resumed, cleared, unattached or empty session starts as it would', async
 test('a failed seed starts without the view and says why', async ($, on) => {
   const world = engine(on, () => [1, '', 'no claude on PATH\n'])
   expect((await start($)).additionalContext).toEqual([PROJECT])
-  expect(world.logs).toEqual(['ai chat compact failed; starting without the thread. no claude on PATH'])
+  expect(world.logs).toEqual(['ai chat compact-session failed; starting without the thread. no claude on PATH'])
 })
 
 test('an attached session with nothing in its thread compacts natively', async ($, on) => {
@@ -117,7 +117,7 @@ test('an unattached session compacts natively', async ($, on) => {
   const result = await compact($, world, { trigger: 'manual', messages: [] })
   expect(result.messages).toEqual(NATIVE)
   expect(world.compacts).toEqual(['manual'])
-  expect(world.calls).toEqual([['ai', 'chat', 'compact', ...SESSION_ARGS]])
+  expect(world.calls).toEqual([['ai', 'chat', 'compact-session', ...SESSION_ARGS]])
   expect(world.logs).toEqual([])
 })
 
@@ -126,7 +126,7 @@ test('a failed ai chat compact falls back to native and says why', async ($, on)
   const result = await compact($, world, { trigger: 'manual', messages: [] })
   expect(result.messages).toEqual(NATIVE)
   expect(world.compacts).toEqual(['manual'])
-  expect(world.logs).toEqual(['ai chat compact failed; compacting natively. lock held'])
+  expect(world.logs).toEqual(['ai chat compact-session failed; compacting natively. lock held'])
 })
 
 test('a subagent compacts natively without ai chat', async ($, on) => {
@@ -136,16 +136,16 @@ test('a subagent compacts natively without ai chat', async ($, on) => {
   expect(world.calls).toEqual([])
 })
 
-test('/ai attach and detach run ai chat with the session', async ($, on) => {
-  const world = engine(on, args => (args[0] === 'attach' ? [0, 'Attached to dev.\n', ''] : [3, '', '']))
+test('/ai attach and detach run ai chat with the session and show its answer', async ($, on) => {
+  const world = engine(on, args =>
+    args[0] === 'attach' ? [0, 'Attached to dev.\n', ''] : [1, '', 'This session is not attached to a thread.\n'],
+  )
   await start($)
   expect((await ai($, 'attach dev')).text).toBe('Attached to dev.')
-  expect((await ai($, ' detach ')).text).toBe(
-    'This session is not attached to an ai chat thread.',
-  )
+  expect((await ai($, ' detach ')).text).toBe('This session is not attached to a thread.')
   expect((await ai($, 'attach')).text).toMatch(/^Usage/)
   expect(world.calls).toEqual([
-    ['ai', 'chat', 'compact', ...ALL_ARGS],
+    ['ai', 'chat', 'compact-session', ...ALL_ARGS],
     ['ai', 'chat', 'attach', 'dev', ...ALL_ARGS],
     ['ai', 'chat', 'detach', ...ALL_ARGS],
   ])
@@ -171,8 +171,8 @@ test('the agent tool queues /compact only when attached', async ($, on) => {
   await world.clock.advance(0)
   expect(world.compacts).toEqual(['/compact'])
   expect(world.calls).toEqual([
-    ['ai', 'chat', 'sync', ...SESSION_ARGS],
-    ['ai', 'chat', 'sync', ...SESSION_ARGS],
+    ['ai', 'chat', 'sync-session', ...SESSION_ARGS],
+    ['ai', 'chat', 'sync-session', ...SESSION_ARGS],
   ])
 })
 
@@ -187,15 +187,15 @@ test('turn end syncs once the transcript is flushed, and only a real failure is 
   await stop($)
   await world.clock.advance(FLUSH_MS)
   expect(world.calls).toEqual([
-    ['ai', 'chat', 'sync', ...ALL_ARGS],
-    ['ai', 'chat', 'sync', ...ALL_ARGS],
+    ['ai', 'chat', 'sync-session', ...ALL_ARGS],
+    ['ai', 'chat', 'sync-session', ...ALL_ARGS],
   ])
-  expect(world.logs).toEqual(['ai chat sync failed: store locked'])
+  expect(world.logs).toEqual(['ai chat sync-session failed: store locked'])
 })
 
 test('a session syncs as it ends', async ($, on) => {
   const world = engine(on, () => [0, '', ''])
   await start($, 'resume')
   await $.session.end({ reason: 'prompt_input_exit', sessionId: SESSION, resume: { id: SESSION } })
-  expect(world.calls).toEqual([['ai', 'chat', 'sync', ...ALL_ARGS]])
+  expect(world.calls).toEqual([['ai', 'chat', 'sync-session', ...ALL_ARGS]])
 })

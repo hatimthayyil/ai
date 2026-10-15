@@ -23,4 +23,5 @@ Logical parents
 
 Subagents and discovery
 - `subagents`: `<session>/subagents/agent-<id>.jsonl`, read like a session, with `agentType`, `description` and `toolUseId` (the Agent call's id in the parent's items) from `.meta.json`. Linking them into a thread is the store's job.
+- `session_dir`: the `cwd` of the transcript's first entry that records one: the directory the session started in, which `claude --resume` must run from (`ai chat resume`).
 - `transcript`: `<config>/projects/<cwd with every non-alphanumeric character as ->/<session>.jsonl`, else the first project directory holding `<session>.jsonl` (names over 200 characters carry a hash; `/cd` moves a session; session ids are unique). Ids other than ASCII letters, digits and `-` are refused. `config_dir`: `$CLAUDE_CONFIG_DIR`, else `~/.claude`; `memory::prov` uses both to find a session's model.

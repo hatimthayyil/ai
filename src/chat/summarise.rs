@@ -18,22 +18,22 @@ use tracing::{Span, dispatcher, info, info_span, warn};
 use crate::{
     chat::{
         record::{Key, Line},
-        rollup::{PROMPT, Rollup},
+        rollup::{PROMPT, Rollup, Source},
         store::{Chat, Thread},
     },
     memory::{Backend, Block, ClaudeCode, JOBS, Who, claude, log, write_line},
 };
 
 const MODEL: &str = "ai.chat.model";
-const NAP: &str = "ai.chat.nap";
+const SUMMARISE: &str = "ai.chat.summarise";
 
 /// The compactor's settings, from the repository's git config.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     /// `ai.chat.model`; default the memory compactor's.
     pub model: String,
-    /// `ai.chat.nap`; default true: sync starts the background compactor.
-    pub nap: bool,
+    /// `ai.chat.summarise`; default true: `sync-session` starts the background summariser.
+    pub summarise: bool,
 }
 
 impl Chat {
@@ -44,29 +44,32 @@ impl Chat {
             .map(|m| m.to_string())
             .filter(|m| !m.trim().is_empty())
             .unwrap_or_else(claude::model);
-        let nap = c
-            .try_boolean(NAP)
-            .with_context(|| format!("{NAP} is true or false"))?
+        let summarise = c
+            .try_boolean(SUMMARISE)
+            .with_context(|| format!("{SUMMARISE} is true or false"))?
             .unwrap_or(true);
-        Ok(Config { model, nap })
+        Ok(Config { model, summarise })
     }
 
-    /// The configured model, through the `claude` on `PATH`.
-    pub fn backend(&self) -> Result<Arc<dyn Backend>> {
-        let model = self.config()?.model;
+    /// `model`, else the configured one, through the `claude` on `PATH`.
+    pub fn backend(&self, model: Option<&str>) -> Result<Arc<dyn Backend>> {
+        let model = match model {
+            Some(m) => m.to_string(),
+            None => self.config()?.model,
+        };
         Ok(Arc::new(ClaudeCode::compactor_at(claude::find()?, &model)?))
     }
 
-    /// Starts `ai chat nap --thread <name>` in the background, unless `ai.chat.nap` is false;
+    /// Starts `ai chat summarise -t <name>` in the background, unless `ai.chat.summarise` is false;
     /// whether it started.
-    pub fn spawn_nap(&self, thread: &Thread) -> Result<bool> {
-        if !self.config()?.nap {
+    pub fn spawn_summariser(&self, thread: &Thread) -> Result<bool> {
+        if !self.config()?.summarise {
             return Ok(false);
         }
         let repo = self.repo();
         let cwd = repo.workdir().unwrap_or(repo.git_dir());
         log::spawn(&thread.log_path()?, |c| {
-            c.args(["chat", "nap", "--thread", thread.name()])
+            c.args(["chat", "summarise", "-t", thread.name()])
                 .current_dir(cwd)
         })?;
         Ok(true)
@@ -82,6 +85,23 @@ pub struct Built {
     pub calls: u64,
     /// Lines whose call failed, and why.
     pub failed: Vec<(Key, String)>,
+}
+
+/// A dry run: what [`summarise`] or [`rebuild`] would write.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Dry {
+    pub built: Built,
+    /// Each line it would write, in build order: its first item, its key, its text and the
+    /// text it would replace.
+    pub lines: Vec<DryLine>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DryLine {
+    pub first: u64,
+    pub key: Key,
+    pub text: String,
+    pub was: Option<String>,
 }
 
 /// Under the thread's lock, waiting for it until `deadline`, builds `keys` and the unbuilt
@@ -119,10 +139,10 @@ pub fn build(
 /// The background compactor: under the thread's lock, builds every line that is ready on any
 /// branch, over each newer snapshot, until none is; logs to [`Thread::log_path`]. `None` if
 /// another compactor holds the lock.
-pub fn nap(thread: &Thread, backend: Arc<dyn Backend>) -> Result<Option<Built>> {
+pub fn summarise(thread: &Thread, backend: Arc<dyn Backend>) -> Result<Option<Built>> {
     let _log = log::init(&thread.log_path()?)?;
-    let _nap = info_span!(
-        "nap",
+    let _span = info_span!(
+        "summarise",
         pid = process::id(),
         thread = thread.name(),
         model = backend.model()
@@ -130,15 +150,15 @@ pub fn nap(thread: &Thread, backend: Arc<dyn Backend>) -> Result<Option<Built>> 
     .entered();
     let start = Instant::now();
     let mut run = Run::new(thread, backend);
-    let mut napped = false;
+    let mut started = false;
     loop {
         let Some(lock) = thread.try_lock()? else {
             info!("busy: another compactor holds the lock; exiting");
-            return Ok(napped.then(|| run.built.clone()));
+            return Ok(started.then(|| run.built.clone()));
         };
-        if !napped {
+        if !started {
             info!("start");
-            napped = true;
+            started = true;
         }
         let seen = loop {
             let tried = run.tried();
@@ -164,6 +184,104 @@ pub fn nap(thread: &Thread, backend: Arc<dyn Backend>) -> Result<Option<Built>> 
     }
 }
 
+/// Rewrites every line of the thread: under its lock, waiting for it until `deadline`, drops
+/// them all, then builds every line again as [`summarise`] does; logs to [`Thread::log_path`].
+/// How many lines it dropped and what it built; `None` if another summariser still holds the
+/// lock at the deadline.
+pub fn rebuild(
+    thread: &Thread,
+    backend: Arc<dyn Backend>,
+    deadline: Instant,
+) -> Result<Option<(usize, Built)>> {
+    let _log = log::init(&thread.log_path()?)?;
+    let _span = info_span!(
+        "rebuild",
+        pid = process::id(),
+        thread = thread.name(),
+        model = backend.model()
+    )
+    .entered();
+    let start = Instant::now();
+    let Some(lock) = thread.lock_before(deadline)? else {
+        warn!("the lock was still held at the deadline; rewrote nothing");
+        return Ok(None);
+    };
+    info!("start");
+    let dropped = thread.drop_lines()?;
+    info!(dropped, "dropped");
+    let mut run = Run::new(thread, backend);
+    loop {
+        let tried = run.tried();
+        run.pass(None, None)?;
+        if run.tried() == tried {
+            break;
+        }
+    }
+    let built = run.built.clone();
+    drop(run);
+    lock.unlock()?;
+    let secs = log::secs(start.elapsed());
+    info!(
+        lines = built.lines,
+        calls = built.calls,
+        failed = built.failed.len(),
+        secs,
+        "end"
+    );
+    Ok(Some((dropped, built)))
+}
+
+/// What [`summarise`] would write now, or with `rebuild` what [`rebuild`] would: each line
+/// built with the model and stored nowhere; logs to [`Thread::log_path`].
+pub fn dry_run(thread: &Thread, backend: Arc<dyn Backend>, rebuild: bool) -> Result<Dry> {
+    let _log = log::init(&thread.log_path()?)?;
+    let _span = info_span!(
+        "dry_run",
+        pid = process::id(),
+        thread = thread.name(),
+        model = backend.model()
+    )
+    .entered();
+    info!(rebuild, "start");
+    let mut run = Run::new(thread, backend);
+    run.dry = Some(Vec::new());
+    run.fresh = rebuild;
+    run.pass(None, None)?;
+    let snap = thread.snapshot()?;
+    let roll = Rollup::new(&snap.tree()?);
+    let old = snap.all_lines()?;
+    let lines = run
+        .dry
+        .take()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(key, text)| DryLine {
+            first: first(&roll, key),
+            key,
+            text,
+            was: old.get(&key).map(|l| l.text.clone()),
+        })
+        .collect();
+    Ok(Dry {
+        built: run.built.clone(),
+        lines,
+    })
+}
+
+/// The first item line `key` covers.
+fn first(roll: &Rollup, key: Key) -> u64 {
+    match roll.source(key) {
+        Some(Source::Chunk { items, .. } | Source::Exchange(items)) => {
+            items.first().copied().unwrap_or(key.last)
+        }
+        Some(Source::Chunked { message, chunks }) => {
+            message.unwrap_or_else(|| chunks.first().map_or(key.last, |&c| first(roll, c)))
+        }
+        Some(Source::Node([a, _])) => first(roll, *a),
+        None => key.last,
+    }
+}
+
 type Done = (Key, Duration, Result<(Who, String)>);
 
 /// Builds lines of one thread, each call on its own thread.
@@ -177,6 +295,10 @@ struct Run<'t> {
     /// Calls failed since the last that succeeded; at [`JOBS`] no more start.
     streak: usize,
     built: Built,
+    /// A dry run's lines, kept here instead of stored; `None` stores them.
+    dry: Option<Vec<(Key, String)>>,
+    /// Whether every line is built anew, the stored ones read as unbuilt.
+    fresh: bool,
 }
 
 /// Build order: oldest first, and a line before the node over it that ends where it ends.
@@ -200,6 +322,8 @@ impl<'t> Run<'t> {
             failed: HashSet::new(),
             streak: 0,
             built: Built::default(),
+            dry: None,
+            fresh: false,
         }
     }
 
@@ -217,11 +341,14 @@ impl<'t> Run<'t> {
     ) -> Result<Option<ObjectId>> {
         let snap = self.thread.snapshot()?;
         let roll = Rollup::new(&snap.tree()?);
-        let mut lines: HashMap<Key, String> = snap
-            .all_lines()?
-            .into_iter()
-            .map(|(k, l)| (k, l.text))
-            .collect();
+        let mut lines: HashMap<Key, String> = match self.fresh {
+            true => HashMap::new(),
+            false => snap
+                .all_lines()?
+                .into_iter()
+                .map(|(k, l)| (k, l.text))
+                .collect(),
+        };
         let mut todo: BTreeSet<(u64, u32)> = match want {
             Some(keys) => self.closure(&roll, &lines, keys)?,
             None => roll
@@ -302,9 +429,20 @@ impl<'t> Run<'t> {
                 return Ok(());
             }
             let keys: Vec<Key> = free.iter().map(|f| f.0).collect();
-            let stored = self.thread.put_lines(free)?;
-            for (k, line) in keys.into_iter().zip(stored) {
-                lines.insert(k, line.text);
+            let texts: Vec<String> = match &mut self.dry {
+                None => self
+                    .thread
+                    .put_lines(free)?
+                    .into_iter()
+                    .map(|l| l.text)
+                    .collect(),
+                Some(dry) => {
+                    dry.extend(free.iter().map(|(k, l)| (*k, l.text.clone())));
+                    free.into_iter().map(|(_, l)| l.text).collect()
+                }
+            };
+            for (k, text) in keys.into_iter().zip(texts) {
+                lines.insert(k, text);
                 todo.remove(&order(k));
                 self.built.lines += 1;
             }
@@ -354,9 +492,17 @@ impl<'t> Run<'t> {
         match r {
             Ok((who, text)) => {
                 info!(line = %k, bytes = text.len(), secs, "built");
-                let kind = roll.source(k).expect("a planned line").kind();
-                let line = self.thread.put_line(k, kind, &who, &text)?;
-                lines.insert(k, line.text);
+                let text = match &mut self.dry {
+                    None => {
+                        let kind = roll.source(k).expect("a planned line").kind();
+                        self.thread.put_line(k, kind, &who, &text)?.text
+                    }
+                    Some(dry) => {
+                        dry.push((k, text.clone()));
+                        text
+                    }
+                };
+                lines.insert(k, text);
                 todo.remove(&order(k));
                 self.built.lines += 1;
                 self.built.calls += 1;
