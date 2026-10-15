@@ -1,4 +1,4 @@
-import type { On, SessionMessage } from 'claude-code'
+import type { On, SessionCompactInput, SessionMessage } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
@@ -9,8 +9,10 @@ const NATIVE: SessionMessage[] = [{ role: 'user', text: 'native summary', toolUs
 const PROJECT = 'a project hook context'
 const SESSION_ARGS = ['--harness', 'claude', '--session', SESSION]
 const ALL_ARGS = [...SESSION_ARGS, '--transcript', TRANSCRIPT]
+const FLUSH_MS = 1_100
 
 type Answer = [exitCode: number, stdout: string, stderr: string]
+type World = ReturnType<typeof engine>
 
 function ai($: Engine, args: string) {
   return $.command.run({
@@ -22,12 +24,14 @@ function ai($: Engine, args: string) {
 }
 
 function engine(on: On, answer: (args: readonly string[]) => Answer) {
+  const clock = mock.clock(on)
   const calls: (readonly string[])[] = []
   const compacts: string[] = []
   const logs: string[] = []
   on('session.id', async () => ({ value: SESSION }))
   on('classic.SessionStart', async () => ({ additionalContext: [PROJECT] }))
   on('classic.Stop', async () => ({}))
+  on('session.end', async (_$, e) => ({ sessionId: e.sessionId }))
   on('process.run', async (_$, e) => {
     calls.push(e.argv)
     const [exitCode, stdout, stderr] = answer(e.argv.slice(2))
@@ -45,18 +49,31 @@ function engine(on: On, answer: (args: readonly string[]) => Answer) {
     logs.push(e.text)
     return { value: undefined }
   })
-  return { calls, compacts, logs }
+  return { clock, calls, compacts, logs }
 }
 
 function start($: Engine, source: 'startup' | 'resume' | 'clear' = 'startup') {
   return $.classic.SessionStart({ source, session_id: SESSION, transcript_path: TRANSCRIPT })
 }
 
-test('an attached session compacts into the ai chat view', async ($, on) => {
+async function compact($: Engine, world: World, e: SessionCompactInput) {
+  const compacted = $.session.compact(e)
+  await world.clock.advance(FLUSH_MS)
+  return compacted
+}
+
+function stop($: Engine) {
+  return $.classic.Stop({ session_id: SESSION, transcript_path: TRANSCRIPT, stop_hook_active: false })
+}
+
+test('an attached session compacts into the ai chat view once the transcript is flushed', async ($, on) => {
   const world = engine(on, () => [0, VIEW, ''])
   await start($, 'resume')
-  const result = await $.session.compact({ trigger: 'auto', messages: [] })
-  expect(result.messages).toEqual([{ role: 'user', text: VIEW, toolUses: [] }])
+  const compacted = $.session.compact({ trigger: 'auto', messages: [] })
+  await world.clock.advance(FLUSH_MS - 1)
+  expect(world.calls).toEqual([])
+  await world.clock.advance(1)
+  expect((await compacted).messages).toEqual([{ role: 'user', text: VIEW, toolUses: [] }])
   expect(world.compacts).toEqual([])
   expect(world.calls).toEqual([['ai', 'chat', 'compact', ...ALL_ARGS]])
 })
@@ -90,14 +107,14 @@ test('a failed seed starts without the view and says why', async ($, on) => {
 
 test('an attached session with nothing in its thread compacts natively', async ($, on) => {
   const world = engine(on, () => [0, '', ''])
-  const result = await $.session.compact({ trigger: 'manual', messages: [] })
+  const result = await compact($, world, { trigger: 'manual', messages: [] })
   expect(result.messages).toEqual(NATIVE)
   expect(world.compacts).toEqual(['manual'])
 })
 
 test('an unattached session compacts natively', async ($, on) => {
   const world = engine(on, () => [3, '', ''])
-  const result = await $.session.compact({ trigger: 'manual', messages: [] })
+  const result = await compact($, world, { trigger: 'manual', messages: [] })
   expect(result.messages).toEqual(NATIVE)
   expect(world.compacts).toEqual(['manual'])
   expect(world.calls).toEqual([['ai', 'chat', 'compact', ...SESSION_ARGS]])
@@ -106,7 +123,7 @@ test('an unattached session compacts natively', async ($, on) => {
 
 test('a failed ai chat compact falls back to native and says why', async ($, on) => {
   const world = engine(on, () => [1, '', 'lock held\n'])
-  const result = await $.session.compact({ trigger: 'manual', messages: [] })
+  const result = await compact($, world, { trigger: 'manual', messages: [] })
   expect(result.messages).toEqual(NATIVE)
   expect(world.compacts).toEqual(['manual'])
   expect(world.logs).toEqual(['ai chat compact failed; compacting natively. lock held'])
@@ -135,25 +152,23 @@ test('/ai attach and detach run ai chat with the session', async ($, on) => {
 })
 
 test('/ai compress runs /compact after the command', async ($, on) => {
-  const clock = mock.clock(on)
   const world = engine(on, () => [0, '', ''])
   expect((await ai($, 'compress')).text).toBe('Compacting.')
   expect(world.compacts).toEqual([])
-  await clock.advance(0)
+  await world.clock.advance(0)
   expect(world.compacts).toEqual(['/compact'])
 })
 
 test('the agent tool queues /compact only when attached', async ($, on) => {
-  const clock = mock.clock(on)
   let isAttached = false
   const world = engine(on, () => (isAttached ? [0, '', ''] : [3, '', '']))
   const call = () => $.tool.call({ tool: 'mcp__ai__compress', input: {} })
   expect(await call()).toMatchObject({ result: 'This session is not attached to an ai chat thread.' })
-  await clock.advance(0)
+  await world.clock.advance(0)
   expect(world.compacts).toEqual([])
   isAttached = true
   expect(await call()).toMatchObject({ result: 'Compaction queued for the end of this turn.' })
-  await clock.advance(0)
+  await world.clock.advance(0)
   expect(world.compacts).toEqual(['/compact'])
   expect(world.calls).toEqual([
     ['ai', 'chat', 'sync', ...SESSION_ARGS],
@@ -161,15 +176,26 @@ test('the agent tool queues /compact only when attached', async ($, on) => {
   ])
 })
 
-test('turn end syncs, and only a real failure is shown', async ($, on) => {
+test('turn end syncs once the transcript is flushed, and only a real failure is shown', async ($, on) => {
   let answer: Answer = [3, '', '']
   const world = engine(on, () => answer)
-  await $.classic.Stop({ session_id: SESSION, transcript_path: TRANSCRIPT, stop_hook_active: false })
+  await stop($)
+  await world.clock.advance(FLUSH_MS - 1)
+  expect(world.calls).toEqual([])
+  await world.clock.advance(1)
   answer = [1, '', 'store locked\n']
-  await $.classic.Stop({ session_id: SESSION, transcript_path: TRANSCRIPT, stop_hook_active: false })
+  await stop($)
+  await world.clock.advance(FLUSH_MS)
   expect(world.calls).toEqual([
     ['ai', 'chat', 'sync', ...ALL_ARGS],
     ['ai', 'chat', 'sync', ...ALL_ARGS],
   ])
   expect(world.logs).toEqual(['ai chat sync failed: store locked'])
+})
+
+test('a session syncs as it ends', async ($, on) => {
+  const world = engine(on, () => [0, '', ''])
+  await start($, 'resume')
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: SESSION, resume: { id: SESSION } })
+  expect(world.calls).toEqual([['ai', 'chat', 'sync', ...ALL_ARGS]])
 })

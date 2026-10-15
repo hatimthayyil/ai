@@ -2,6 +2,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 const NOT_ATTACHED = 3
 const LONG_MS = 600_000
+const FLUSH_MS = 1_100
 const USAGE = 'Usage: /ai compress | /ai attach <name> | /ai detach'
 
 const transcript = { plugin: 'ai', key: 'transcript' } as const
@@ -31,6 +32,11 @@ async function view($: EngineInterface, args: string[], fallback: string): Promi
     $.ui.log(`ai chat compact failed; ${fallback}. ${ran.stderr.trim()}`)
   }
   return undefined
+}
+
+async function sync($: EngineInterface, args: string[]): Promise<void> {
+  const ran = await chat($, ['sync', ...args])
+  if (ran.exitCode !== 0 && ran.exitCode !== NOT_ATTACHED) $.ui.log(`ai chat sync failed: ${ran.stderr.trim()}`)
 }
 
 function reply(ran: Ran): string {
@@ -70,16 +76,22 @@ export const register: Register = on => {
 
   on('session.compact', async ($, e, next) => {
     if (e.agentId !== undefined) return next(e)
+    await $.clock.sleep(FLUSH_MS)
     const text = await view($, await session($), 'compacting natively')
     if (text === undefined) return next(e)
     return { messages: [{ role: 'user', text, toolUses: [] }] }
   })
 
   on('classic.Stop', async ($, e, next) => {
-    void chat($, ['sync', ...sessionArgs(e.session_id, e.transcript_path)]).then(ran => {
-      if (ran.exitCode !== 0 && ran.exitCode !== NOT_ATTACHED) $.ui.log(`ai chat sync failed: ${ran.stderr.trim()}`)
-    })
+    const args = sessionArgs(e.session_id, e.transcript_path)
+    $.clock.after(FLUSH_MS, () => sync($, args))
     return next(e)
+  })
+
+  on('session.end', async ($, e, next) => {
+    const ended = await next(e)
+    await sync($, sessionArgs(e.sessionId, (await $.state.get(transcript)).value))
+    return ended
   })
 
   on('command.run', { command: 'ai' }, async ($, e) => {
