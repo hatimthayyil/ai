@@ -565,6 +565,80 @@ fn a_held_lock_makes_a_second_nap_exit_at_once() {
 }
 
 #[test]
+fn build_waits_for_a_running_nap_and_calls_for_nothing_it_built() {
+    let r = Repo::new();
+    let mut s = Script::new();
+    for k in 0..3 {
+        s.exchange(k);
+    }
+    s.user("open");
+    let t = r.thread(&s);
+    let tree = t.snapshot().unwrap().tree().unwrap();
+    let keys = Rollup::new(&tree)
+        .branch(&tree, *tree.tips().last().unwrap())
+        .lines();
+    let slow = Fake::with(Duration::from_millis(300), |_| false);
+    let napping = {
+        let (path, slow) = (r.path(), slow.clone());
+        thread::spawn(move || {
+            let t = Chat::find(&path).unwrap().unwrap().thread("t").unwrap();
+            nap(&t, slow.backend()).unwrap()
+        })
+    };
+    while slow.calls() == 0 {
+        thread::sleep(Duration::from_millis(5));
+    }
+    let fast = Fake::new();
+    let at = Instant::now();
+    let b = build(&t, fast.backend(), &keys, at + Duration::from_secs(10)).unwrap();
+    assert!(
+        at.elapsed() >= Duration::from_millis(200),
+        "{:?}",
+        at.elapsed()
+    );
+    assert_eq!((b, fast.calls()), (Built::default(), 0));
+    let napped = napping.join().unwrap().expect("the nap held the lock");
+    assert_eq!(napped.calls as usize, slow.calls(), "one call per line");
+    let built = lines(&t);
+    assert!(keys.iter().all(|k| built.contains_key(k)), "{built:?}");
+}
+
+#[test]
+fn build_gives_up_on_a_lock_held_past_its_deadline() {
+    let r = Repo::new();
+    let mut s = Script::new();
+    let e0 = s.exchange(0);
+    s.user("open");
+    let t = r.thread(&s);
+    let held = r
+        .chat()
+        .thread("t")
+        .unwrap()
+        .try_lock()
+        .unwrap()
+        .expect("free");
+    let fake = Fake::new();
+    let at = Instant::now();
+    let b = build(
+        &t,
+        fake.backend(),
+        &[key(1, e0)],
+        at + Duration::from_millis(200),
+    )
+    .unwrap();
+    let took = at.elapsed();
+    assert!(
+        took >= Duration::from_millis(200) && took < Duration::from_secs(2),
+        "{took:?}"
+    );
+    assert_eq!((b, fake.calls()), (Built::default(), 0));
+    assert!(lines(&t).is_empty());
+    let log = fs::read_to_string(t.log_path().unwrap()).unwrap();
+    assert!(log.contains("waiting") && log.contains("deadline"), "{log}");
+    held.unlock().unwrap();
+}
+
+#[test]
 fn failed_lines_stay_unbuilt_and_a_failing_model_stops_the_nap() {
     let r = Repo::new();
     let mut s = Script::new();

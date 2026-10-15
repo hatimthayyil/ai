@@ -19,7 +19,6 @@
 ## Chat
 
 - `ai chat` layer 1 runs end to end in Claude Code (register.ts.md, End to end). To enable: `CLAUDE_CODE_PLUGIN_DIRS` in the `env` of `~/.claude/settings.json` (README). Open from that run:
-  - `compact` builds a needed line even while the nap is building it: two calls for one line, and a 9 s compaction right after an exchange closes. Wait for the nap's line instead when it holds the lock?
   - Haiku overruns the 512-byte line often (6 retries in 16 calls); Sonnet stays the default model.
   - A seed's last section is titled "The exchange in progress", though it is the previous session's last exchange; the seeded model read it as the current request.
   - A native summary is a marker: after `detach`, native `/compact`, `attach`, its text is neither in the view nor in `zoom`.

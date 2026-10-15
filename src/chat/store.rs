@@ -3,6 +3,7 @@ use std::{
     fs::{self, File},
     ops::Range,
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 use anyhow::{Context, Result, bail};
@@ -236,6 +237,13 @@ impl Thread {
     pub fn try_lock(&self) -> Result<Option<File>> {
         self.dir()?;
         file::try_lock(&self.lock)
+    }
+
+    /// The compactor's lock on this thread, waiting for it until `deadline`; `None` if another
+    /// process still holds it then.
+    pub fn lock_before(&self, deadline: Instant) -> Result<Option<File>> {
+        self.dir()?;
+        file::lock_before(&self.lock, deadline)
     }
 
     /// The compactor's log, beside its lock; its directory is made if absent.

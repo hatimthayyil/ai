@@ -84,10 +84,11 @@ pub struct Built {
     pub failed: Vec<(Key, String)>,
 }
 
-/// Builds `keys` and the unbuilt lines they are made from, up to [`JOBS`] calls at once,
-/// until they are built, `deadline` passes, or failures leave nothing to start; logs to
-/// [`Thread::log_path`]. Calls still running at the deadline are stopped through `backend`. A
-/// key that is no line of the thread is an error.
+/// Under the thread's lock, waiting for it until `deadline`, builds `keys` and the unbuilt
+/// lines they are made from, up to [`JOBS`] calls at once, until they are built, `deadline`
+/// passes, or failures leave nothing to start; logs to [`Thread::log_path`]. Calls still
+/// running at the deadline are stopped through `backend`. A key that is no line of the thread
+/// is an error.
 pub fn build(
     thread: &Thread,
     backend: Arc<dyn Backend>,
@@ -96,9 +97,23 @@ pub fn build(
 ) -> Result<Built> {
     let _log = log::init(&thread.log_path()?)?;
     let _build = info_span!("build", pid = process::id(), thread = thread.name()).entered();
+    let lock = match thread.try_lock()? {
+        Some(lock) => lock,
+        None => {
+            info!("busy: waiting for the compactor that holds the lock");
+            let Some(lock) = thread.lock_before(deadline)? else {
+                warn!("the lock was still held at the deadline; built nothing");
+                return Ok(Built::default());
+            };
+            lock
+        }
+    };
     let mut run = Run::new(thread, backend);
     run.pass(Some(keys), Some(deadline))?;
-    Ok(run.built.clone())
+    let built = run.built.clone();
+    drop(run);
+    lock.unlock()?;
+    Ok(built)
 }
 
 /// The background compactor: under the thread's lock, builds every line that is ready on any
