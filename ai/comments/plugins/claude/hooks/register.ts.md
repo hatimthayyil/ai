@@ -18,3 +18,12 @@ The Claude Code side of `ai chat` (design: `ai/research/20261014T002322---chat-d
 - `$.process.run` reads the whole output until the child exits: `ai chat sync` must detach `nap` from its stdout and stderr, or it holds the call. Its timeout is 30 s by default; `compact` and `attach` get the 10-minute maximum.
 - An interactive `--plugin-dir` session writes the engine's type declarations into `.claude-plugin/types/` and a `tsconfig.json` beside `hooks/`; `.gitignore` keeps both out. With them laid, `tsc -p plugins/claude` type-checks the module and tests.
 - Tests (`claude plugin test plugins/claude`) stub `process.run` and the clock beneath the plugin; they need no model and no `ai`.
+
+End to end (2026-10-15, Claude Code 2.1.300, haiku, throwaway repo, private tmux; 36 model requests: 19 Claude Code requests (one the seed-size probe), 1 native summary, 16 compactor calls of which 6 were over-limit retries; the nap was off for the last two steps):
+- `ai chat claude t1` on a new thread: no seed. Three tool-use turns (Write, Bash, Read+Edit); each turn-end sync ingested them (sync 20 ms, unattached 12 ms) and the nap built the closed exchanges' lines and nodes (haiku, 1.7–2.5 s a call).
+- Manual `/compact`: the 2.4 KB view became the context, 46 ms, no model call; the model answered from it and ran `ai chat zoom 0-3` through Bash.
+- Agent tool: ToolSearch, `mcp__ai__compress`, `/compact` at turn end, 9.2 s: `compact` built the just-closed exchange's line beside the nap doing the same (two calls for one line), and its view lacked the final reply (the flush race above).
+- `/ai detach`, `/compact`: native, 7.2 s, one summarizer call. `/ai attach t1` caught up the 4 entries since. `/clear`: unattached (`/ai detach` says so).
+- `ai chat resume t1` from the terminal: `claude --resume` of the attached session, natively, with its full context.
+- After the flush fix: `/ai compress` typed during a turn compacted in 1.1 s with the final reply in the view; the Stop sync took the final reply.
+- Second `ai chat claude t1`, from the nix-built package and plugin: seeded with the 4,218-character view in ~0.6 s; the model answered from it; a resume of that session answered a question only the seed held.

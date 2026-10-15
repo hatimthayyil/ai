@@ -16,6 +16,16 @@
 - Before a public release: version the store format and give `ai memory` an upgrade path (e.g. rebuild old leaves that still carry `note:` tags). Not needed while only the user runs it.
 - Before a public release: `ai hooks install` to add the memory reminder hooks (Claude Code, Codex, pi) on a new machine; on this machine the Nix config does it.
 
+## Chat
+
+- `ai chat` layer 1 runs end to end in Claude Code (register.ts.md, End to end). To enable: `CLAUDE_CODE_PLUGIN_DIRS` in the `env` of `~/.claude/settings.json` (README). Open from that run:
+  - `compact` builds a needed line even while the nap is building it: two calls for one line, and a 9 s compaction right after an exchange closes. Wait for the nap's line instead when it holds the lock?
+  - Haiku overruns the 512-byte line often (6 retries in 16 calls); Sonnet stays the default model.
+  - A seed's last section is titled "The exchange in progress", though it is the previous session's last exchange; the seeded model read it as the current request.
+  - A native summary is a marker: after `detach`, native `/compact`, `attach`, its text is neither in the view nor in `zoom`.
+  - After an `ai chat` compaction, nested `CLAUDE.md`/`AGENTS.md` files are not re-attached (register.ts.md). Not tested: the run had `CLAUDE_CODE_DISABLE_CLAUDE_MDS`.
+  - Auto-compaction was not run live (it needs a full context); the plugin tests cover the `auto` trigger.
+
 ## Notes
 
 - `ai notes` layer 1 merged (design `ai/research/20261013T222521---notes-design.md`). User not yet on board with the model: a topic is a bare directory and only notes (files) carry content, IDs and links, so `linguistics` itself cannot be a note or a link target. Next: make every node a note (Luhmann: any card can have sub-cards; Dendron: `linguistics.syntax` is itself a note), with the derived summary attached to any node that has children and links to any node by ID. Then layer 2 (curator, supersedes, staleness lint).
