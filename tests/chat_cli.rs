@@ -530,8 +530,8 @@ fn resume_continues_the_newest_session_or_starts_one() {
     ok(s.ai_in("s-2", &["attach", "dev"]), "Attached to dev.\n");
     ok(s.ai_in("s-2", &["detach"]), "Detached from dev.\n");
 
-    ok(s.ai(&["resume", "dev"]), "");
-    assert_eq!(s.argv(), ["--resume", "s-2"]);
+    ok(s.ai(&["resume", "dev", "--", "--model", "haiku"]), "");
+    assert_eq!(s.argv(), ["--resume", "s-2", "--model", "haiku"]);
     let t = s.chat().thread("dev").unwrap();
     let b = t
         .snapshot()
@@ -552,13 +552,14 @@ fn resume_continues_the_newest_session_or_starts_one() {
     assert_eq!(s.argv()[0], "--session-id");
 
     fs::remove_file(newest).unwrap();
-    let o = s.ai(&["resume", "dev"]);
+    let o = s.ai(&["resume", "dev", "--", "--model", "haiku"]);
     assert_eq!(
         stderr(&o),
         "Cannot resume dev here: the transcript of session s-2 is gone. Starting a new session.\n"
     );
     let argv = s.argv();
     assert_eq!(argv[0], "--session-id");
+    assert_eq!(argv[2..], ["--model", "haiku"]);
     let b = t
         .snapshot()
         .unwrap()

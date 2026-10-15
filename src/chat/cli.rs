@@ -56,6 +56,12 @@ enum Command {
     )]
     Resume {
         name: Option<String>,
+        #[arg(
+            last = true,
+            requires = "name",
+            help = "arguments for claude, after --"
+        )]
+        args: Vec<String>,
         #[arg(long, help = "the part of the view to print, as printed")]
         part: Option<u64>,
         #[arg(long, help = "the thread commit the parts come from, as printed")]
@@ -166,13 +172,16 @@ impl Cli {
         match self.command {
             Command::Claude { name, args } => launch(cwd, &name, &args),
             Command::Resume {
-                name: Some(name), ..
-            } => resume(cwd, &name),
+                name: Some(name),
+                args,
+                ..
+            } => resume(cwd, &name, &args),
             Command::Resume {
                 name: None,
                 part,
                 at,
                 session,
+                ..
             } => match session.current() {
                 Some(c) => view(cwd, out, &c, part.unwrap_or(1), at.as_deref()),
                 None => list(cwd, out),
@@ -282,7 +291,7 @@ fn launch(cwd: &Path, name: &str, args: &[String]) -> Result<ExitCode> {
 }
 
 /// The thread's newest Claude Code session, resumed attached when it can be; else a new one.
-fn resume(cwd: &Path, name: &str) -> Result<ExitCode> {
+fn resume(cwd: &Path, name: &str, args: &[String]) -> Result<ExitCode> {
     let chat = find(cwd)?;
     let t = chat.thread(name)?;
     if !t.exists()? {
@@ -305,14 +314,16 @@ fn resume(cwd: &Path, name: &str) -> Result<ExitCode> {
                     .is_some_and(|d| d == here.as_str()) =>
             {
                 chat.attach(name, claude::HARNESS, &b.session, Some(p))?;
-                return exec_claude(&["--resume", &b.session]);
+                let mut argv = vec!["--resume", &b.session];
+                argv.extend(args.iter().map(String::as_str));
+                return exec_claude(&argv);
             }
             Some(_) => format!("session {} ran in another directory", b.session),
             None => format!("session {} has no transcript", b.session),
         },
     };
     eprintln!("Cannot resume {name} here: {why}. Starting a new session.");
-    launch(cwd, name, &[])
+    launch(cwd, name, args)
 }
 
 /// Every thread: name, the harness and time of its newest item, its branches.

@@ -11,4 +11,4 @@ Lines are written through the library (`Thread::put_line`), keyed by `exchange_e
 - Listing; the view in three parts whose footers chain, joined equal to `compact`'s output, although a line is built between parts.
 - Zoom of a node, a node with an unbuilt half, an exchange, an item, a long item in two parts; bad ids.
 - Launcher: argv, binding with the future transcript path, graft of a second session.
-- Resume: unknown thread; the newest session resumed and re-attached; from another directory and with the transcript gone, a new session with the reason on stderr.
+- Resume: unknown thread; the newest session resumed and re-attached, with the launcher's args; from another directory and with the transcript gone, a new session with the reason on stderr and the same args.

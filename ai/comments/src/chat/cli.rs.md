@@ -9,7 +9,7 @@ Sessions
 
 Terminal
 - `claude <name> [-- args]`: a version-4 UUID (getrandom), bound to `name` with its future transcript `<config>/projects/<project_dir(cwd)>/<uuid>.jsonl` (the file does not exist yet, so nothing is ingested; the graft is the thread's newest item), then `exec claude --session-id <uuid> args…`. Seeding a fresh session with the view is the plugin's.
-- `resume <name>`: the thread's newest Claude Code binding, by tip then attach time. Resumed only if its transcript exists in the project directory of the current directory, the only one `claude --resume` searches: re-attached (catching up), then `exec claude --resume <id>`. Otherwise one line on stderr says why, and it launches a new session as above. No guard against running inside a session: Claude Code refuses a nested launch itself.
+- `resume <name> [-- args]`: the thread's newest Claude Code binding, by tip then attach time. Resumed only if its transcript exists in the project directory of the current directory, the only one `claude --resume` searches: re-attached (catching up), then `exec claude --resume <id> args…`. Otherwise one line on stderr says why, and it launches a new session as above, with the same args. The args are the launcher's (model, permission mode, plugin dirs), so a resumed session runs as it was started. No guard against running inside a session: Claude Code refuses a nested launch itself.
 - `resume` with neither name nor session lists the threads: name, harness and UTC minute of the newest item, branch count.
 
 In session
