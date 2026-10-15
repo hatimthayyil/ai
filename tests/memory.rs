@@ -51,7 +51,7 @@ fn runtime(backend: Arc<dyn Backend>) -> Runtime {
     Runtime {
         backend: Box::new(move || Ok(backend.clone())),
         opts: opts(VIEW, 8),
-        nap_on_note: false,
+        summarise_on_note: false,
         before_release: Box::new(|| {}),
         stdin: Box::new(|| Ok(String::new())),
     }
@@ -99,7 +99,7 @@ fn hook(dir: &Path, input: &str) -> Out {
         stdin: Box::new(move || Ok(input.clone())),
         ..runtime(Arc::new(Model(Arc::new(Fake::summaries()))))
     };
-    run_rt(dir, &rt, &["hook"])
+    run_rt(dir, &rt, &["prompt-hook"])
 }
 
 fn store() -> (TempDir, PathBuf) {
@@ -667,13 +667,17 @@ fn a_node_failing_past_its_retries_stops_the_compactor() {
 }
 
 #[test]
-fn a_nap_on_a_dead_backend_gives_up_and_frees_the_lock() {
+fn a_summariser_on_a_dead_backend_gives_up_and_frees_the_lock() {
     let (_tmp, d) = store();
     let s = Store::open(&d).unwrap();
     s.append("t", &[msg(Kind::User, long(0)), msg(Kind::User, long(1))])
         .unwrap();
     let dead = Fake::new(|_, _| bail!("usage limit reached"));
-    let r = run_rt(&d, &runtime(Arc::new(Model(Arc::new(dead)))), &["nap"]);
+    let r = run_rt(
+        &d,
+        &runtime(Arc::new(Model(Arc::new(dead)))),
+        &["summarise"],
+    );
     assert_eq!(r.code, 1, "{}", r.stderr);
     let failed = |n| {
         format!(
@@ -686,13 +690,13 @@ fn a_nap_on_a_dead_backend_gives_up_and_frees_the_lock() {
         r.stdout
     );
     assert!(
-        Regex::new(r"\nGave up on [01] after 4 failures in a row: usage limit reached\. It stays pending; the nap after the next note tries again\.\n$")
+        Regex::new(r"\nGave up on [01] after 4 failures in a row: usage limit reached\. It stays pending; the summariser after the next note tries again\.\n$")
             .unwrap()
             .is_match(&r.stdout),
         "{}",
         r.stdout
     );
-    let log = fs::read_to_string(d.join("nap.log")).unwrap();
+    let log = fs::read_to_string(d.join("summarise.log")).unwrap();
     let errors: Vec<&str> = log.lines().filter(|l| l.contains(" ERROR ")).collect();
     assert_eq!(errors.len(), 1, "{log}");
     assert!(
@@ -703,7 +707,7 @@ fn a_nap_on_a_dead_backend_gives_up_and_frees_the_lock() {
     );
     assert!(!log.contains(" end "), "{log}");
     assert!(!Mem::load(&s.snapshot().unwrap(), VIEW).unwrap().all_built());
-    assert_eq!(run(&d, &["nap"]).stdout, "Built 3 summaries.\n");
+    assert_eq!(run(&d, &["summarise"]).stdout, "Built 3 summaries.\n");
 }
 
 #[test]
@@ -717,7 +721,7 @@ fn a_life_through_the_cli() {
     assert_eq!(run(d, &["note", "   "]).code, 1);
     let r = run(d, &["wake"]);
     assert!(r.stdout.contains("No memories yet") && r.stdout.ends_with("You are awake.\n"));
-    assert_eq!(run(d, &["nap"]).stdout, "Nothing to build.\n");
+    assert_eq!(run(d, &["summarise"]).stdout, "Nothing to build.\n");
 
     let seed = tmp.path().join("seed.txt");
     let lines: String = (0..40)
@@ -760,7 +764,7 @@ fn a_life_through_the_cli() {
     assert!(wake.ends_with(&format!("\n{AWAKE}\n")), "{wake}");
 
     let rt = runtime(Arc::new(Model(Arc::new(Fake::summaries()))));
-    let r = run_rt(d, &rt, &["nap"]);
+    let r = run_rt(d, &rt, &["summarise"]);
     assert!(
         Regex::new(r"^Built \d+ summaries\.\n$")
             .unwrap()
@@ -780,7 +784,7 @@ fn a_life_through_the_cli() {
             );
         }
     }
-    assert_eq!(run(d, &["nap"]).stdout, "Nothing to build.\n");
+    assert_eq!(run(d, &["summarise"]).stdout, "Nothing to build.\n");
 
     assert_eq!(run(d, &["config", "WAKE_LINES=8"]).code, 0);
     let wake = run(d, &["wake"]).stdout;
@@ -1002,7 +1006,7 @@ fn init_prints_the_block_and_is_idempotent() {
             .contains("ai memory note \"<1 line, max 280 bytes>\"")
     );
     assert!(r.stdout.contains("ai memory zoom <id+n>"));
-    assert!(!r.stdout.contains("nap"));
+    assert!(!r.stdout.contains("summarise"));
 }
 
 #[test]
@@ -1124,21 +1128,21 @@ fn a_missing_dir_is_reported_not_created() {
 }
 
 #[test]
-fn a_nap_logs_timestamped_events_to_nap_log() {
+fn a_summariser_logs_timestamped_events_to_summarise_log() {
     let (_tmp, d) = store();
     let s = Store::open(&d).unwrap();
     s.append("t", &[msg(Kind::User, long(0)), msg(Kind::User, long(1))])
         .unwrap();
-    let r = run(&d, &["nap"]);
+    let r = run(&d, &["summarise"]);
     assert_eq!(r.stdout, "Built 3 summaries.\n", "{}", r.stderr);
     let line = |level: &str, event: &str| {
         Regex::new(&format!(
-            r"(?m)^\d{{4}}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{{6}}Z  {level} nap\{{pid={} model=\S+ dir=\S+\}}: ai_tools::memory::\w+: {event}$",
+            r"(?m)^\d{{4}}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{{6}}Z  {level} summarise\{{pid={} model=\S+ dir=\S+\}}: ai_tools::memory::\w+: {event}$",
             std::process::id()
         ))
         .unwrap()
     };
-    let log = fs::read_to_string(d.join("nap.log")).unwrap();
+    let log = fs::read_to_string(d.join("summarise.log")).unwrap();
     for event in [
         "start",
         r"built node=0 bytes=300 secs=[\d.]+",
@@ -1158,9 +1162,13 @@ fn a_nap_logs_timestamped_events_to_nap_log() {
         }
         Ok("y".repeat(if attempt == 1 { 600 } else { 300 }))
     });
-    let r = run_rt(&d, &runtime(Arc::new(Model(Arc::new(flaky)))), &["nap"]);
+    let r = run_rt(
+        &d,
+        &runtime(Arc::new(Model(Arc::new(flaky)))),
+        &["summarise"],
+    );
     assert!(r.stdout.ends_with("Built 1 summary.\n"), "{}", r.stdout);
-    let log = fs::read_to_string(d.join("nap.log")).unwrap();
+    let log = fs::read_to_string(d.join("summarise.log")).unwrap();
     let warns = [
         r#"failed node=2 error="overloaded" secs=[\d.]+ wait=[\d.]+"#,
         r"over limit node=2 bytes=600 attempt=1",
@@ -1175,7 +1183,7 @@ fn a_nap_logs_timestamped_events_to_nap_log() {
 }
 
 #[test]
-fn a_note_whose_nap_finds_the_lock_taken_still_gets_built() {
+fn a_note_whose_summariser_finds_the_lock_taken_still_gets_built() {
     let (_tmp, d) = store();
     let s = Store::open(&d).unwrap();
     s.append("t", &[msg(Kind::User, long(0))]).unwrap();
@@ -1192,18 +1200,18 @@ fn a_note_whose_nap_finds_the_lock_taken_still_gets_built() {
             .unwrap()
             .append("note", &[msg(Kind::Note, long(1))])
             .unwrap();
-        *seen = Some(run_rt(&dir, &runtime(m2.clone()), &["nap"]).stdout);
+        *seen = Some(run_rt(&dir, &runtime(m2.clone()), &["summarise"]).stdout);
     });
-    let r = run_rt(&d, &rt, &["nap"]);
+    let r = run_rt(&d, &rt, &["summarise"]);
     assert_eq!(
         late.lock().unwrap().as_deref(),
         Some("A compactor is already running; it will build these too.\n"),
-        "the late nap must find the lock taken"
+        "the late summariser must find the lock taken"
     );
     assert_eq!(r.stdout, "Built 3 summaries.\n", "{}", r.stderr);
     let m = Mem::load(&s.snapshot().unwrap(), VIEW).unwrap();
     assert!(m.built(Coord::leaf(1)) && m.built(Coord::new(1, 0)));
-    assert_eq!(run(&d, &["nap"]).stdout, "Nothing to build.\n");
+    assert_eq!(run(&d, &["summarise"]).stdout, "Nothing to build.\n");
 }
 
 #[test]
@@ -1255,17 +1263,17 @@ fn stats_count_notes_from_the_store_and_reads_from_the_usage_log() {
         call("20200301T092000Z", "zoom", true, a.0, a.1, "s1"),
         call("20200301T092100Z", "zoom", true, a.0, a.1, "s1"),
         call("20200301T092200Z", "grep", false, a.0, a.1, "s1"),
-        call("20200301T092300Z", "hook", true, a.0, a.1, "s1"),
-        call("20200301T092400Z", "hook", true, a.0, a.1, "s1")
+        call("20200301T092300Z", "prompt-hook", true, a.0, a.1, "s1"),
+        call("20200301T092400Z", "prompt-hook", true, a.0, a.1, "s1")
             .replace(r#""args":[]"#, r#""args":["reminded","periodic"]"#),
-        call("20200301T092500Z", "hook", false, a.0, a.1, "s1"),
+        call("20200301T092500Z", "prompt-hook", false, a.0, a.1, "s1"),
         "torn".into(),
         call("20200302T095900Z", "wake", true, b.0, b.1, "s2"),
         call("20200302T100500Z", "show", true, b.0, b.1, "s2"),
         call("20200302T120000Z", "wake", true, b.0, b.1, "s3"),
         call("20200302T120100Z", "note", false, b.0, b.1, "s3"),
         call("20200302T120200Z", "note", true, b.0, b.1, "s3"),
-        call("20200302T130000Z", "nap", true, b.0, b.1, "s3"),
+        call("20200302T130000Z", "summarise", true, b.0, b.1, "s3"),
     ];
     fs::write(d.join("usage.jsonl"), log.join("\n") + "\n").unwrap();
 
@@ -1367,7 +1375,7 @@ fn the_hook_reminds_on_long_prompts_only_and_never_fails() {
             )
         })
         .collect();
-    let hook = |args: serde_json::Value, ok| ("hook", args, ok);
+    let hook = |args: serde_json::Value, ok| ("prompt-hook", args, ok);
     assert_eq!(
         seen,
         [

@@ -10,10 +10,10 @@ Memory:
 - `serde_json`: stream-json with Claude Code. `tempfile`: the backend's system-prompt files.
 - `getrandom`: the store's origin.
 - `libc`: Linux child process groups and parent-death signals.
-- `tracing`, `tracing-subscriber` (`fmt`, `env-filter`, `std`; no `ansi`, no proc-macro attributes): the nap log, see `src/memory/log.rs.md`.
+- `tracing`, `tracing-subscriber` (`fmt`, `env-filter`, `std`; no `ansi`, no proc-macro attributes): the summarise log, see `src/memory/log.rs.md`.
 - `backon` (`default-features = false`, `std`): retry backoff for the compactor, used as an iterator of delays; no Tokio or timers pulled in. Its async `Retryable` (feature `tokio-sleep`) is the path if the compactor moves to Tokio. `backoff` is unmaintained (RUSTSEC-2025-0012, which points to backon). See ai/research/*rust-retry-crates.md.
 - `serde` (`derive`): the usage log record, written and read as JSON Lines with `serde_json`.
 
-Notes: reuse memory's backend (Claude Code compactor), retry and job limits, grep pattern, nap spawning and log; gix (with `index`) for the repo, jiff for ids, regex for `[[id]]` links, tempfile for atomic repo creation. No YAML crate: frontmatter is `key: value` lines.
+Notes: reuse memory's backend (Claude Code compactor), retry and job limits, grep pattern, summariser spawning and log; gix (with `index`) for the repo, jiff for ids, regex for `[[id]]` links, tempfile for atomic repo creation. No YAML crate: frontmatter is `key: value` lines.
 
 Chat: serde_json for transcripts and tool inputs, jiff for item times, memchr to cut a file at its last newline, tempfile in tests.

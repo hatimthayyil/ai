@@ -20,7 +20,7 @@ pub const ME: &str = "ai notes";
 pub const SUMMARY: &str = "_summary.md";
 const GIT: &str = ".git";
 const LOCK: &str = "ai-notes.lock";
-const NAP_LOCK: &str = "ai-notes-nap.lock";
+const SUMMARISE_LOCK: &str = "ai-notes-summarise.lock";
 
 /// A topic as read from disk: its summary, its notes and its subtopics, in name order.
 #[derive(Debug, Default)]
@@ -145,9 +145,9 @@ impl Store {
         Ok(r)
     }
 
-    /// The nap lock, unless another nap holds it.
-    pub fn nap_lock(&self) -> Result<Option<File>> {
-        file::try_lock(&self.git_dir().join(NAP_LOCK))
+    /// The summariser lock, unless another summariser holds it.
+    pub fn summarise_lock(&self) -> Result<Option<File>> {
+        file::try_lock(&self.git_dir().join(SUMMARISE_LOCK))
     }
 
     fn create(&self) -> Result<()> {

@@ -10,4 +10,4 @@ Spec: `ai/research/20261013T222521---notes-design.md` (Store). Layer 1.
 - `load`: directories named by slugs are topics (others ignored, so `.git` and stray dirs are skipped); files `<id>---<slug>.md` are notes, `_summary.md` the summary (none at the root). Sorted by name, so ids order notes by creation.
 - `prune`: after a move, the source topic and each one above it holding nothing but `_summary.md` are removed. git keeps no empty dirs, and a summary of nothing would linger otherwise.
 - `write` goes through a `.tmp` file and a rename: reads take no lock, so they must never see half a file.
-- Locks and the nap log live in `.git`, so they are never committed.
+- Locks and the summarise log live in `.git`, so they are never committed.

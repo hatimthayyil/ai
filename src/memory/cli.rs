@@ -121,7 +121,7 @@ enum Command {
         text: String,
     },
     #[command(about = "build every summary that can be built now, with Claude Code.")]
-    Nap,
+    Summarise,
     #[command(about = "search every message ever recorded, newest page first.")]
     Grep(Grep),
     #[command(about = "open a line of the view into the four lines two levels under it.")]
@@ -148,9 +148,10 @@ enum Command {
     #[command(about = "count how often agents wake, note, zoom, grep and show.")]
     Stats(Stats),
     #[command(
-        about = "the prompt hook for agent harnesses: a memory reminder on long prompts and every few short ones."
+        hide = true,
+        about = "plumbing: the prompt hook for agent harnesses, a memory reminder on long prompts and every few short ones."
     )]
-    Hook,
+    PromptHook,
 }
 
 impl Command {
@@ -163,7 +164,7 @@ impl Command {
                 ("wake", part(from).into_iter().chain(meta.args()).collect())
             }
             Command::Note { .. } => ("note", Vec::new()),
-            Command::Nap => ("nap", Vec::new()),
+            Command::Summarise => ("summarise", Vec::new()),
             Command::Grep(g) => ("grep", g.typed()),
             Command::Zoom { id, part: p, meta } => (
                 "zoom",
@@ -176,7 +177,7 @@ impl Command {
             Command::Config { sets } => ("config", sets.clone()),
             Command::Import { file } => ("import", vec![file.display().to_string()]),
             Command::Stats(st) => ("stats", st.args()),
-            Command::Hook => ("hook", Vec::new()),
+            Command::PromptHook => ("prompt-hook", Vec::new()),
         }
     }
 }
@@ -185,9 +186,9 @@ impl Command {
 pub struct Runtime {
     pub backend: Box<dyn Fn() -> Result<Arc<dyn Backend>>>,
     pub opts: Options,
-    /// Whether `note` starts a background `nap`.
-    pub nap_on_note: bool,
-    /// Called by `nap` when a round is done, while it still holds the compactor lock.
+    /// Whether `note` starts a background `summarise`.
+    pub summarise_on_note: bool,
+    /// Called by `summarise` when a round is done, while it still holds the compactor lock.
     pub before_release: Box<dyn Fn()>,
     pub stdin: Box<dyn Fn() -> io::Result<String>>,
 }
@@ -197,18 +198,18 @@ impl Default for Runtime {
         Runtime {
             backend: Box::new(|| Ok(Arc::new(ClaudeCode::compactor()?))),
             opts: Options::default(),
-            nap_on_note: std::env::var_os("AI_MEMORY_NAP").is_none_or(|v| v != "0"),
+            summarise_on_note: std::env::var_os("AI_MEMORY_SUMMARISE").is_none_or(|v| v != "0"),
             before_release: Box::new(|| {}),
             stdin: Box::new(|| io::read_to_string(io::stdin())),
         }
     }
 }
 
-/// Starts `ai <tool> nap` on the store at `dir` (named to it by `$var`), detached; it logs to
-/// `nap.log` in `log_dir`, its stderr too.
-pub fn spawn_nap(tool: &str, var: &str, dir: &Path, log_dir: &Path) -> Result<()> {
-    log::spawn(&log_dir.join(log::NAP_LOG), |c| {
-        c.args([tool, "nap"]).env(var, dir)
+/// Starts `ai <tool> summarise` on the store at `dir` (named to it by `$var`), detached; it logs to
+/// `summarise.log` in `log_dir`, its stderr too.
+pub fn spawn_summariser(tool: &str, var: &str, dir: &Path, log_dir: &Path) -> Result<()> {
+    log::spawn(&log_dir.join(log::SUMMARISE_LOG), |c| {
+        c.args([tool, "summarise"]).env(var, dir)
     })
 }
 
@@ -253,9 +254,9 @@ impl Cli {
         let mut who = prov::env_who();
         let (cmd, mut args) = self.command.typed();
         let mut out = Tally::new(out);
-        let quiet = matches!(self.command, Command::Hook);
+        let quiet = matches!(self.command, Command::PromptHook);
         let r = match self.command {
-            Command::Hook => hook(&mut out, (rt.stdin)(), dir, &mut who).map(|rule| {
+            Command::PromptHook => hook(&mut out, (rt.stdin)(), dir, &mut who).map(|rule| {
                 args.extend(rule.into_iter().flat_map(|r| [REMINDED.into(), r.into()]));
                 ExitCode::SUCCESS
             }),
@@ -281,10 +282,10 @@ impl Command {
         who: &Who,
     ) -> Result<ExitCode> {
         match self {
-            Command::Init | Command::Hook => unreachable!(),
+            Command::Init | Command::PromptHook => unreachable!(),
             Command::Wake { from, meta } => wake(s, out, from.unwrap_or(0), &meta),
             Command::Note { text } => note(s, out, &text, rt, place, who),
-            Command::Nap => nap(s, out, rt),
+            Command::Summarise => summarise(s, out, rt),
             Command::Grep(g) => grep(&s.snapshot()?, out, &g),
             Command::Zoom { id, part, meta } => {
                 zoom_cmd(&s.snapshot()?, out, &id, part.unwrap_or(1), &meta)
@@ -454,13 +455,13 @@ fn note(
     };
     let (i, _, _) = s.append("note", &[m])?;
     writeln!(out, "Saved as {i}.")?;
-    if rt.nap_on_note && pending(s)? {
-        spawn_nap("memory", "AI_MEMORY_DIR", s.dir(), s.dir())?;
+    if rt.summarise_on_note && pending(s)? {
+        spawn_summariser("memory", "AI_MEMORY_DIR", s.dir(), s.dir())?;
     }
     Ok(ExitCode::SUCCESS)
 }
 
-/// The compactor's lock is taken: another nap or chat is building, and will see the new messages.
+/// The compactor's lock is taken: another summariser or chat is building, and will see the new messages.
 const BUSY: &str = "A compactor is already running; it will build these too.";
 
 /// Whether a node can be built now on the latest snapshot.
@@ -469,10 +470,10 @@ fn pending(s: &Store) -> Result<bool> {
     Ok(!mem.due(|_| false, 1).is_empty())
 }
 
-fn nap(s: &Store, out: &mut dyn Write, rt: &Runtime) -> Result<ExitCode> {
-    let _log = log::init(&s.dir().join(log::NAP_LOG))?;
-    let _nap = info_span!(
-        "nap",
+fn summarise(s: &Store, out: &mut dyn Write, rt: &Runtime) -> Result<ExitCode> {
+    let _log = log::init(&s.dir().join(log::SUMMARISE_LOG))?;
+    let _span = info_span!(
+        "summarise",
         pid = process::id(),
         model = %claude::model(),
         dir = ?pretty(s.dir())
@@ -494,7 +495,7 @@ fn nap(s: &Store, out: &mut dyn Write, rt: &Runtime) -> Result<ExitCode> {
     error!(node = %g.node, tries = g.tries, error = g.error, "gave up");
     writeln!(
         out,
-        "{g}. It stays pending; the nap after the next note tries again."
+        "{g}. It stays pending; the summariser after the next note tries again."
     )?;
     Ok(ExitCode::FAILURE)
 }

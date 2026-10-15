@@ -61,7 +61,8 @@ impl Sandbox {
         for k in ISOLATE {
             c.env_remove(k);
         }
-        c.env("AI_MEMORY_NAP", "0").env("AI_NOTES_NAP", "0");
+        c.env("AI_MEMORY_SUMMARISE", "0")
+            .env("AI_NOTES_SUMMARISE", "0");
     }
 
     fn cmd(&self, cwd: &Path, store: Option<&Path>) -> Command {
@@ -398,7 +399,7 @@ fn every_mutation_is_one_named_commit() {
     s.ai(&["import", seed.to_str().unwrap()]);
     s.ai(&["note", "a noted memory"]);
     s.ai(&["wake"]);
-    s.ai(&["nap"]);
+    s.ai(&["summarise"]);
     assert_eq!(
         s.store_git(&["log", "--format=%s|%cn <%ce>", REF]),
         "note|ai memory <ai@localhost>\n\
@@ -668,7 +669,7 @@ done
 ";
 
 #[test]
-fn a_note_naps_in_the_background() {
+fn a_note_is_summarised_in_the_background() {
     let s = Sandbox::new();
     assert!(s.ai(&["init"]).status.success());
     let path = s.fake_claude(FAKE_CLAUDE);
@@ -676,7 +677,7 @@ fn a_note_naps_in_the_background() {
         let r = s
             .cmd(s.path(), Some(&s.store()))
             .args(["note", &format!("note {i} {}", "z".repeat(250))])
-            .env("AI_MEMORY_NAP", "1")
+            .env("AI_MEMORY_SUMMARISE", "1")
             .env("PATH", &path)
             .output()
             .unwrap();
@@ -707,14 +708,14 @@ fn a_note_naps_in_the_background() {
         }
         assert!(
             Instant::now() < deadline,
-            "no nap: {}",
-            fs::read_to_string(s.store().join("nap.log")).unwrap_or_default()
+            "no summariser: {}",
+            fs::read_to_string(s.store().join("summarise.log")).unwrap_or_default()
         );
         thread::sleep(Duration::from_millis(50));
     }
     let r = s
         .cmd(s.path(), Some(&s.store()))
-        .arg("nap")
+        .arg("summarise")
         .env("PATH", &path)
         .output()
         .unwrap();
@@ -893,7 +894,7 @@ fn a_newer_format_is_refused_before_any_write() {
     for args in [
         &["note", "x"][..],
         &["wake"],
-        &["nap"],
+        &["summarise"],
         &["show", "0"],
         &["init"],
     ] {
@@ -954,7 +955,7 @@ fn a_note_from_stdin_is_summarised_in_the_background() {
             "Decoherence explains collapse",
         ])
         .args(["--confidence", "verified"])
-        .env("AI_NOTES_NAP", "1")
+        .env("AI_NOTES_SUMMARISE", "1")
         .env("PATH", &path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -984,8 +985,8 @@ fn a_note_from_stdin_is_summarised_in_the_background() {
         }
         assert!(
             Instant::now() < deadline,
-            "{log}\nnap.log: {}",
-            fs::read_to_string(notes.join(".git/nap.log")).unwrap_or_default()
+            "{log}\nsummarise.log: {}",
+            fs::read_to_string(notes.join(".git/summarise.log")).unwrap_or_default()
         );
         thread::sleep(Duration::from_millis(50));
     }

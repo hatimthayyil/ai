@@ -117,7 +117,7 @@ impl Store {
         let _lock = match self.try_lock()? {
             Some(l) => l,
             None => {
-                eprintln!("Waiting for the running nap to finish, to upgrade this memory.");
+                eprintln!("Waiting for the running summariser to finish, to upgrade this memory.");
                 file::lock(&self.dir.join(LOCK))?
             }
         };

@@ -15,7 +15,7 @@ use crate::{
     file::pretty,
     memory::{
         Backend, ClaudeCode, JOBS, PLACEHOLDER, Pattern, broken_pipe, claude, excerpt, log, plural,
-        spawn_nap, store_dir,
+        spawn_summariser, store_dir,
     },
     notes::{
         leaf::{Confidence, Front, Leaf, check_body, check_title, is_id, new_id},
@@ -63,7 +63,7 @@ enum Command {
     #[command(about = "link a note to another: a weak cross-topic reference.")]
     Link { from: String, to: String },
     #[command(about = "rebuild every summary out of date, with Claude Code.")]
-    Nap,
+    Summarise,
 }
 
 #[derive(Args, Debug)]
@@ -99,8 +99,8 @@ struct Add {
 /// How commands reach the summariser's model and stdin; tests swap in their own.
 pub struct Runtime {
     pub backend: Box<dyn Fn() -> Result<Arc<dyn Backend>>>,
-    /// Whether changes start a background `nap`.
-    pub nap_on_change: bool,
+    /// Whether changes start a background `summarise`.
+    pub summarise_on_change: bool,
     pub stdin: Box<dyn Fn() -> io::Result<String>>,
 }
 
@@ -108,7 +108,7 @@ impl Default for Runtime {
     fn default() -> Runtime {
         Runtime {
             backend: Box::new(|| Ok(Arc::new(ClaudeCode::compactor()?))),
-            nap_on_change: std::env::var_os("AI_NOTES_NAP").is_none_or(|v| v != "0"),
+            summarise_on_change: std::env::var_os("AI_NOTES_SUMMARISE").is_none_or(|v| v != "0"),
             stdin: Box::new(|| io::read_to_string(io::stdin())),
         }
     }
@@ -137,14 +137,14 @@ impl Cli {
             Command::Add(a) => add(&s, out, rt, a),
             Command::Mv { from, to } => mv(&s, out, rt, &from, &to),
             Command::Link { from, to } => link(&s, out, &from, &to),
-            Command::Nap => nap(&s, out, rt),
+            Command::Summarise => summarise_cmd(&s, out, rt),
         }
     }
 }
 
-fn nap_after(s: &Store, rt: &Runtime) -> Result<()> {
-    if rt.nap_on_change && !due(&s.load()?)?.is_empty() {
-        spawn_nap("notes", DIR_VAR, s.dir(), &s.git_dir())?;
+fn summarise_after(s: &Store, rt: &Runtime) -> Result<()> {
+    if rt.summarise_on_change && !due(&s.load()?)?.is_empty() {
+        spawn_summariser("notes", DIR_VAR, s.dir(), &s.git_dir())?;
     }
     Ok(())
 }
@@ -361,7 +361,7 @@ fn add(s: &Store, out: &mut dyn Write, rt: &Runtime, a: Add) -> Result<ExitCode>
         Ok(leaf.id)
     })?;
     writeln!(out, "Saved as {id} in {topic}.")?;
-    nap_after(s, rt)?;
+    summarise_after(s, rt)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -393,7 +393,7 @@ fn mv(s: &Store, out: &mut dyn Write, rt: &Runtime, from: &str, to: &str) -> Res
         s.prune(&t.parent().expect("not the root"))
     })?;
     writeln!(out, "Moved {from} to {dest}.")?;
-    nap_after(s, rt)?;
+    summarise_after(s, rt)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -420,17 +420,17 @@ fn link(s: &Store, out: &mut dyn Write, from: &str, to: &str) -> Result<ExitCode
     Ok(ExitCode::SUCCESS)
 }
 
-/// Another nap holds the lock; it will see these changes too.
-const BUSY: &str = "A nap is already running; it will build these too.";
+/// Another summariser holds the lock; it will see these changes too.
+const BUSY: &str = "A summariser is already running; it will build these too.";
 
-fn nap(s: &Store, out: &mut dyn Write, rt: &Runtime) -> Result<ExitCode> {
+fn summarise_cmd(s: &Store, out: &mut dyn Write, rt: &Runtime) -> Result<ExitCode> {
     if !s.exists() {
         writeln!(out, "Nothing to build.")?;
         return Ok(ExitCode::SUCCESS);
     }
-    let _log = log::init(&s.git_dir().join(log::NAP_LOG))?;
-    let _nap = info_span!(
-        "nap",
+    let _log = log::init(&s.git_dir().join(log::SUMMARISE_LOG))?;
+    let _span = info_span!(
+        "summarise",
         pid = process::id(),
         model = %claude::model(),
         dir = ?pretty(s.dir())
@@ -445,18 +445,20 @@ fn nap(s: &Store, out: &mut dyn Write, rt: &Runtime) -> Result<ExitCode> {
         }
         Err(e) => {
             error!(error = format!("{e:#}"), "failed");
-            Err(e.context("Summaries stay out of date; the nap after the next change tries again"))
+            Err(e.context(
+                "Summaries stay out of date; the summariser after the next change tries again",
+            ))
         }
     }
 }
 
-/// Rounds of summaries, deepest first, until none is out of date or another nap holds the lock.
+/// Rounds of summaries, deepest first, until none is out of date or another summariser holds the lock.
 fn rounds(s: &Store, out: &mut dyn Write, rt: &Runtime) -> Result<u64> {
     let mut built = 0;
     while !due(&s.load()?)?.is_empty() {
-        let Some(lock) = s.nap_lock()? else {
+        let Some(lock) = s.summarise_lock()? else {
             writeln!(out, "{BUSY}")?;
-            info!("busy: another nap holds the lock; exiting");
+            info!("busy: another summariser holds the lock; exiting");
             return Ok(built);
         };
         let backend = (rt.backend)()?;

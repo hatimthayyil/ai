@@ -59,7 +59,10 @@ pub fn hook(
 fn unreminded(dir: &Path, session: &str) -> bool {
     let n = REMIND_EVERY - 1;
     !session.is_empty()
-        && usage::last(dir, n, |u| u.cmd == "hook" && u.ok && u.session == session).is_ok_and(
-            |hooks| hooks.len() == n && hooks.iter().all(|u| !u.args.iter().any(|a| a == REMINDED)),
-        )
+        && usage::last(dir, n, |u| {
+            u.cmd == "prompt-hook" && u.ok && u.session == session
+        })
+        .is_ok_and(|hooks| {
+            hooks.len() == n && hooks.iter().all(|u| !u.args.iter().any(|a| a == REMINDED))
+        })
 }

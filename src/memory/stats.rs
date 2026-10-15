@@ -179,7 +179,7 @@ pub fn stats(s: &Snapshot, dir: &Path, out: &mut dyn Write, st: &Stats) -> Resul
     let mut failed = Counts::default();
     let (mut hooked, mut reminded, mut periodic) = (0, 0, 0);
     for u in usage::read(dir)?.into_iter().filter(|u| u.ts >= from) {
-        if u.cmd == "hook" && u.ok {
+        if u.cmd == "prompt-hook" && u.ok {
             let has = |a: &str| u64::from(u.args.iter().any(|x| x == a));
             hooked += 1;
             reminded += has(REMINDED);

@@ -1,6 +1,6 @@
 # hook.rs
 
-- `ai memory hook`: the UserPromptSubmit hook harnesses call, so the reminder text and its threshold ship with the product, not in each user's harness config.
+- `ai memory prompt-hook` (plumbing, hidden from help): the UserPromptSubmit hook harnesses call, so the reminder text and its threshold ship with the product, not in each user's harness config.
 - Input: the harness's hook JSON on stdin. Claude Code and Codex send an object with `prompt` (plus `session_id`, `cwd`, `hook_event_name`, ...); pi's extension sends `{"prompt": ..., "session_id": ...}`. `prompt` and `session_id` are read; serde ignores the rest.
 - Long prompt (`LONG_PROMPT` = 150 chars, counted as `char`s, not bytes): prints `{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":REMINDER}}`, the shape Claude Code and Codex both accept. Short prompt: prints nothing, unless the periodic rule fires (below). serde_json sorts the keys; order does not matter to the harness.
 - `REMINDER` is `prompts/reminder.txt`, trailing whitespace trimmed at compile time (`trim_ascii_end` is const). No config knob.

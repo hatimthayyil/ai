@@ -12,7 +12,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::file::AtPath;
 
-pub const NAP_LOG: &str = "nap.log";
+pub const SUMMARISE_LOG: &str = "summarise.log";
 
 /// The log at `path`, opened for appending.
 pub fn open(path: &Path) -> Result<File> {
@@ -41,7 +41,7 @@ pub fn init(path: &Path) -> Result<DefaultGuard> {
 /// Starts this program with what `args` sets, in the background: no stdin or stdout, stderr
 /// to the log at `log`, in its own process group. It holds none of the caller's pipes.
 pub fn spawn(log: &Path, args: impl FnOnce(&mut Command) -> &mut Command) -> Result<()> {
-    let exe = std::env::current_exe().context("Cannot find this program to start a nap.")?;
+    let exe = std::env::current_exe().context("Cannot find this program to start a summariser.")?;
     let mut cmd = Command::new(exe);
     args(&mut cmd)
         .stdin(Stdio::null())
@@ -49,7 +49,7 @@ pub fn spawn(log: &Path, args: impl FnOnce(&mut Command) -> &mut Command) -> Res
         .stderr(open(log)?)
         .process_group(0)
         .spawn()
-        .context("Cannot start a nap.")?;
+        .context("Cannot start a summariser.")?;
     Ok(())
 }
 
