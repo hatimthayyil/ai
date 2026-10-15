@@ -1,5 +1,11 @@
 # Backlog
 
+## ai
+
+- Configuration system for `ai`: user-level and repo-level settings, layered, with a library built for it (figment, config-rs, confique: research first). Covers the chat view size (64 lines), summariser model, background summariser switch, memory sizes. Today these sit in three places: git config (`ai.chat.model`, `ai.chat.nap`), `ai memory config`, `AI_MEMORY_MODEL`.
+- `ai desk`: a TUI overview of every part of `ai` (memory, chat threads and sessions, notes, code): search and navigate, see stale lines, resummarise a line. Mostly for `ai notes`/`ai code`, where the user takes part; the user doubts session logs need curating.
+- Overlap between `ai memory` and `ai chat` (both fold a log into a summary tree with the same ids): consider consolidating.
+
 ## Memory
 
 - `ai memory` compactor prompt defects fixed (retry asks for a complete rewrite; `scale.txt` is lorem ipsum): truncation 37→2 (Sonnet), 23→6 (Haiku), no leaks. Haiku 5.5 still distorts merges (`ai/evals/compactor`, 2026-10-08b); Sonnet stays default.
