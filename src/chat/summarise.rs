@@ -343,7 +343,7 @@ pub fn dry_run(
 }
 
 /// The first item line `key` covers.
-fn first(roll: &Rollup, key: Key) -> u64 {
+pub fn first(roll: &Rollup, key: Key) -> u64 {
     match roll.source(key) {
         Some(Source::Chunk { items, .. } | Source::Turn(items)) => {
             items.first().copied().unwrap_or(key.last)

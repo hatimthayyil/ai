@@ -16,8 +16,9 @@ use crate::{
         claude,
         id::Id,
         record::Binding,
+        rollup::Rollup,
         store::{Chat, Snapshot, Thread, check_name},
-        summarise::{build, dry_run, rebuild, rewrite, summarise},
+        summarise::{build, dry_run, first, rebuild, rewrite, summarise},
         sync::Synced,
         view::Branch,
     },
@@ -819,8 +820,14 @@ fn summarise_cmd(
             b
         }
     };
-    for (k, e) in &built.failed {
-        writeln!(out, "Failed {k}: {e}")?;
+    if !built.failed.is_empty() {
+        let tree = t.snapshot()?.tree()?;
+        let roll = Rollup::new(&tree);
+        let place = |seq: u64| tree.place(seq as usize);
+        for (k, e) in &built.failed {
+            let id = Id::line(k.level, place(first(&roll, *k)), place(k.last));
+            writeln!(out, "Failed {id}: {e}")?;
+        }
     }
     Ok(match built.failed.is_empty() {
         true => ExitCode::SUCCESS,
