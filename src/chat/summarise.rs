@@ -267,7 +267,7 @@ pub fn rewrite(
     let snap = thread.snapshot()?;
     let roll = Rollup::new(&snap.tree()?);
     if roll.source(key).is_none() {
-        bail!("{key} is no line of thread {}.", thread.name());
+        bail!("{key} is not a line of thread {}.", thread.name());
     }
     let above = roll.above(key);
     let built_above = above
@@ -481,7 +481,7 @@ impl<'t> Run<'t> {
                 continue;
             }
             let Some(s) = roll.source(k) else {
-                bail!("{k} is no line of thread {}.", self.thread.name());
+                bail!("{k} is not a line of thread {}.", self.thread.name());
             };
             stack.extend(s.children());
         }

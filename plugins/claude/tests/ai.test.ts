@@ -102,7 +102,7 @@ test('a resumed, cleared, unattached or empty session starts as it would', async
 test('a failed seed starts without the view and says why', async ($, on) => {
   const world = engine(on, () => [1, '', 'no claude on PATH\n'])
   expect((await start($)).additionalContext).toEqual([PROJECT])
-  expect(world.logs).toEqual(['ai chat compact-session failed; starting without the thread. no claude on PATH'])
+  expect(world.logs).toEqual(["ai chat compact-session failed; starting without the thread's view. no claude on PATH"])
 })
 
 test('an attached session with nothing in its thread compacts natively', async ($, on) => {
@@ -126,7 +126,7 @@ test('a failed ai chat compact falls back to native and says why', async ($, on)
   const result = await compact($, world, { trigger: 'manual', messages: [] })
   expect(result.messages).toEqual(NATIVE)
   expect(world.compacts).toEqual(['manual'])
-  expect(world.logs).toEqual(['ai chat compact-session failed; compacting natively. lock held'])
+  expect(world.logs).toEqual(["ai chat compact-session failed; using Claude Code's own compaction. lock held"])
 })
 
 test('a subagent compacts natively without ai chat', async ($, on) => {
@@ -163,7 +163,7 @@ test('the agent tool queues /compact only when attached', async ($, on) => {
   let isAttached = false
   const world = engine(on, () => (isAttached ? [0, '', ''] : [3, '', '']))
   const call = () => $.tool.call({ tool: 'mcp__ai__compress', input: {} })
-  expect(await call()).toMatchObject({ result: 'This session is not attached to an ai chat thread.' })
+  expect(await call()).toMatchObject({ result: 'This session is not attached to a thread. Attach it with /ai attach <name>.' })
   await world.clock.advance(0)
   expect(world.compacts).toEqual([])
   isAttached = true

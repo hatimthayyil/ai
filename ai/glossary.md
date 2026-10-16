@@ -50,7 +50,7 @@
 - `place` (chat): an item's turn and number in it, from its branch (`model::Place`); fixed by the path from the root, so the same on every branch through the item.
 - `user rail`: the newest user messages of closed turns, word for word, about 8 KB, after the fold.
 - `open turn`: a branch's last turn, not yet closed; the view shows its message, chunk lines and newest steps raw (`OPEN` = 16,000 bytes). In a seeded session it is the previous session's last turn, headed so.
-- `placeholder` (chat): `8+4|(not summarized yet)`, a line the roll-up has not built; `12.3+7|(not shown)`, the steps of the open turn left out for room.
+- `placeholder` (chat): `8+4|(not summarised yet)`, a line the roll-up has not built; `12.3+7|(not shown)`, the steps of the open turn left out for room.
 - `launcher`: `ai chat start <name> [-- args]`: a new session id bound to the thread with its future transcript, then `exec claude --session-id`.
 - `seed` (chat): the view a launched session of an existing thread starts with, its only context: the plugin's `SessionStart` (`startup`) context, from `ai chat compact-session`. Kept in the transcript, so a resume replays it; a compaction replaces it.
 - `roll-up`: a thread's lines and what each is made from (`chat::Rollup`), over every branch: chunk lines (level 0), turn lines of closed turns (1), binary nodes over aligned pairs of closed turns along the branch (1+k). Built by the chat compactor.

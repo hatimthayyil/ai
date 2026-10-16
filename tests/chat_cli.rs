@@ -294,7 +294,7 @@ fn plumbing_for_an_unattached_session_exits_3_silently() {
 fn porcelain_without_a_thread_says_what_to_do() {
     let s = Sandbox::new();
     let attach = "This session is not attached to a thread. Attach it with `ai chat attach <name>`, or name a thread with -t.\n";
-    let name = "Name a thread with -t: this is not a harness session. List them: ai chat list\n";
+    let name = "Name a thread with -t; this shell is outside an agent session. List the threads: ai chat list\n";
     for cmd in [
         &["view"][..],
         &["zoom", "0"],
@@ -310,11 +310,11 @@ fn porcelain_without_a_thread_says_what_to_do() {
     );
     fails(
         s.ai(&["view", "-t", "dev"]),
-        "No thread dev in this repository. List them: ai chat list\n",
+        "No thread dev in this repository. List the threads: ai chat list\n",
     );
     fails(
         s.outside(&["view", "-t", "dev"]),
-        "Not in a git repository: ai chat keeps its threads in one.\n",
+        "Not in a git repository. Run this inside the repository that holds the thread.\n",
     );
 }
 
@@ -379,7 +379,7 @@ fn attach_sync_and_detach() {
         let args = [cmd, "dev"];
         fails(
             s.ai(&args[..usize::from(cmd == "attach") + 1]),
-            "No session: run this inside a harness session, or pass --session.\n",
+            "No session: run this inside an agent session, or pass --session.\n",
         );
     }
     let o = s.ai_in("s-1", &["attach", "a/b"]);
@@ -414,7 +414,7 @@ fn compact_session_syncs_and_prints_the_view() {
         4,
         "compact-session synced the rest of the transcript"
     );
-    let fold = section(&view, "Earlier turns, summarized");
+    let fold = section(&view, "Earlier turns, summarised");
     assert_eq!(fold.len(), 3);
     assert_eq!(fold[0], "0|user asked to run the tests; two failed");
     assert!(
@@ -431,7 +431,7 @@ fn compact_session_syncs_and_prints_the_view() {
     );
     let open = section(&view, "The turn in progress");
     assert!(open[0].starts_with("3.0|user: "));
-    assert!(section(&view, "Earlier turns, summarized").len() <= FOLD_LINES);
+    assert!(section(&view, "Earlier turns, summarised").len() <= FOLD_LINES);
 }
 
 #[test]
@@ -534,7 +534,7 @@ fn view_prints_a_thread_in_parts_from_one_commit() {
         .collect();
     let third = stdout(&s.ai_in("s-2", &args));
     let (body, footer) = third.trim_end().rsplit_once('\n').unwrap();
-    assert_eq!(footer, "Part 3 of 3, the last.");
+    assert_eq!(footer, "Part 3 of 3.");
     parts += &(body.to_string() + "\n");
     assert_eq!(parts, view, "the parts come from one commit");
     let o = s.ai_in("s-2", &["view", "--part", "2", "--at", "xyz"]);
@@ -564,7 +564,7 @@ fn view_syncs_its_session_and_writes_the_lines_it_needs() {
     );
     assert_eq!(lines(&s), 1, "the closed turn's line is written");
     assert!(
-        section(&outside, "Earlier turns, summarized")[0].starts_with("0|user: question 0 ai: ")
+        section(&outside, "Earlier turns, summarised")[0].starts_with("0|user: question 0 ai: ")
     );
 
     let inside = stdout(&s.ai_in("s-1", &["view"]));
@@ -573,8 +573,8 @@ fn view_syncs_its_session_and_writes_the_lines_it_needs() {
         "the session's view syncs it first: {inside}"
     );
     assert_eq!(lines(&s), 3);
-    assert_eq!(section(&inside, "Earlier turns, summarized").len(), 3);
-    assert!(!inside.contains("not summarized yet"), "{inside}");
+    assert_eq!(section(&inside, "Earlier turns, summarised").len(), 3);
+    assert!(!inside.contains("not summarised yet"), "{inside}");
 }
 
 #[test]
@@ -599,11 +599,11 @@ fn zoom_opens_lines_and_items() {
     ok(s.ai(&["zoom", "-t", "dev", "0+2"]), "0|first\n1|second\n");
     ok(
         s.ai_in("s-1", &["zoom", "0+4"]),
-        "0|first\n1|second\n2|(not summarized yet)\n3|(not summarized yet)\n",
+        "0|first\n1|second\n2|(not summarised yet)\n3|(not summarised yet)\n",
     );
     ok(
         s.ai_in("s-1", &["zoom", "1+3"]),
-        "1|second\n2+2|(not summarized yet)\n",
+        "1|second\n2+2|(not summarised yet)\n",
     );
     ok(
         s.ai_in("s-1", &["zoom", "2"]),
@@ -979,11 +979,11 @@ fn summarise_writes_or_rewrites_one_line() {
     );
     fails(
         s.ai_in("s-1", &["summarise", "4"]),
-        "4 is no line of this branch. A line is a closed turn (12), an aligned node over closed turns (8+4) or a chunk (12.3+7).\n",
+        "4 is not a line on this branch. Lines are closed turns (12), aligned nodes over closed turns (8+4) and chunks (12.3+7).\n",
     );
     fails(
         s.ai_in("s-1", &["summarise", "1+3"]),
-        "1+3 is no line of this branch. A line is a closed turn (12), an aligned node over closed turns (8+4) or a chunk (12.3+7).\n",
+        "1+3 is not a line on this branch. Lines are closed turns (12), aligned nodes over closed turns (8+4) and chunks (12.3+7).\n",
     );
     fails(
         s.ai_in("s-1", &["summarise", "x"]),

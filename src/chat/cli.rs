@@ -37,7 +37,7 @@ pub const WAIT: Duration = Duration::from_secs(60);
 #[derive(Parser, Debug)]
 #[command(
     name = "chat",
-    about = "Named, repo-local conversations that outlive harness sessions.",
+    about = "Named conversations that span agent sessions, kept in this repository.",
     after_help = "Threads live in the repository's git, under refs/ai/chat/."
 )]
 pub struct Cli {
@@ -58,6 +58,7 @@ enum Command {
     },
     #[command(about = "continue the thread's newest Claude Code session.")]
     Resume {
+        #[arg(help = "the thread")]
         name: String,
         #[arg(last = true, help = "arguments for claude, after --")]
         args: Vec<String>,
@@ -82,20 +83,22 @@ enum Command {
         #[command(flatten)]
         session: Session,
     },
-    #[command(about = "stop tracking this session; /compact is native again.")]
+    #[command(
+        about = "detach this session from its thread; /compact goes back to Claude Code's own."
+    )]
     Detach {
         #[command(flatten)]
         session: Session,
     },
-    #[command(about = "open a line of the view, or any turn, item or range of them.")]
+    #[command(about = "open a line of the view, or any turn, item or range.")]
     Zoom {
         #[command(flatten)]
         target: Target,
-        #[arg(help = "an id: 12 for turn 12, 8+4 for turns 8 to 11, 12.3 for item 3 of turn 12")]
+        #[arg(help = "an id: 12 (turn 12), 8+4 (turns 8 to 11), 12.3 (item 3 of turn 12)")]
         id: String,
         #[arg(help = "the part of a long output to show, as printed")]
         part: Option<u64>,
-        #[arg(long, help = "show tool output")]
+        #[arg(long, help = "include tool output")]
         tool_output: bool,
     },
     #[command(about = "search a thread: messages, replies, tool calls and summary lines.")]
@@ -109,7 +112,7 @@ enum Command {
         #[arg(
             long,
             value_name = "ID",
-            help = "only matches before this id: the next page"
+            help = "only matches before this id, for the next page"
         )]
         before: Option<String>,
     },
@@ -117,11 +120,11 @@ enum Command {
     Summarise {
         #[command(flatten)]
         target: Target,
-        #[arg(help = "one line: 12 for turn 12, 8+4 for a node, 12.3+7 for a chunk")]
+        #[arg(help = "one line: 12 (a turn), 8+4 (a node), 12.3+7 (a chunk)")]
         id: Option<String>,
         #[arg(
             long,
-            help = "rewrite the lines already written (or the one line), and drop the lines above them"
+            help = "rewrite lines already written, all or the one named, and drop the lines above them"
         )]
         rebuild: bool,
         #[arg(
@@ -278,7 +281,8 @@ fn not_attached() -> Result<ExitCode> {
 
 /// The threads of the repository at `cwd`.
 fn find(cwd: &Path) -> Result<Chat> {
-    Chat::find(cwd)?.context("Not in a git repository: ai chat keeps its threads in one.")
+    Chat::find(cwd)?
+        .context("Not in a git repository. Run this inside the repository that holds the thread.")
 }
 
 /// The thread `-t` names, else the one the session is attached to; with the session when it is
@@ -294,7 +298,7 @@ fn pick(cwd: &Path, t: Target) -> Result<(Chat, Thread, Option<Current>)> {
         Some(name) => {
             let thread = chat.thread(&name)?;
             if !thread.exists()? {
-                bail!("No thread {name} in this repository. List them: ai chat list");
+                bail!("No thread {name} in this repository. List the threads: ai chat list");
             }
             let current = current.filter(|_| attached.is_some_and(|a| a.name() == name));
             Ok((chat, thread, current))
@@ -305,7 +309,7 @@ fn pick(cwd: &Path, t: Target) -> Result<(Chat, Thread, Option<Current>)> {
                 "This session is not attached to a thread. Attach it with `ai chat attach <name>`, or name a thread with -t."
             ),
             None => bail!(
-                "Name a thread with -t: this is not a harness session. List them: ai chat list"
+                "Name a thread with -t; this shell is outside an agent session. List the threads: ai chat list"
             ),
         },
     }
@@ -489,7 +493,7 @@ fn list(cwd: &Path, out: &mut dyn Write, s: Session) -> Result<ExitCode> {
 
 fn attach(cwd: &Path, out: &mut dyn Write, name: &str, s: Session) -> Result<ExitCode> {
     let Some(c) = s.current() else {
-        bail!("No session: run this inside a harness session, or pass --session.");
+        bail!("No session: run this inside an agent session, or pass --session.");
     };
     let a = find(cwd)?.attach(name, &c.harness, &c.session, c.transcript(cwd).as_deref())?;
     let mut msg = format!("Attached to {}", a.thread);
@@ -508,7 +512,7 @@ fn attach(cwd: &Path, out: &mut dyn Write, name: &str, s: Session) -> Result<Exi
 
 fn detach(cwd: &Path, out: &mut dyn Write, s: Session) -> Result<ExitCode> {
     let Some(c) = s.current() else {
-        bail!("No session: run this inside a harness session, or pass --session.");
+        bail!("No session: run this inside an agent session, or pass --session.");
     };
     match find(cwd)?.detach(&c.harness, &c.session)? {
         Some(t) => writeln!(out, "Detached from {t}.")?,
@@ -589,7 +593,7 @@ fn view(
             t.name()
         )?;
     } else if n > 1 {
-        writeln!(out, "Part {part} of {n}, the last.")?;
+        writeln!(out, "Part {part} of {n}.")?;
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -712,7 +716,7 @@ fn summarise_cmd(
             let key = read_branch(&t.snapshot()?, session.as_ref())?
                 .and_then(|b| b.line_key(id))
                 .with_context(|| {
-                    format!("{id} is no line of this branch. A line is a closed turn (12), an aligned node over closed turns (8+4) or a chunk (12.3+7).")
+                    format!("{id} is not a line on this branch. Lines are closed turns (12), aligned nodes over closed turns (8+4) and chunks (12.3+7).")
                 })?;
             Some((id, key))
         }

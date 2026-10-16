@@ -512,7 +512,7 @@ fn build_makes_the_lines_asked_and_what_they_need() {
     let err = build(&t, fake.backend(), &[key(1, e0 + 1)], deadline).unwrap_err();
     assert_eq!(
         err.to_string(),
-        format!("1@{} is no line of thread t.", e0 + 1)
+        format!("1@{} is not a line of thread t.", e0 + 1)
     );
 }
 
@@ -739,7 +739,7 @@ fn rewrite_drops_the_line_and_those_above_it() {
     let err = rewrite(&t, fake.backend(), key(1, e0 + 1), Instant::now()).unwrap_err();
     assert_eq!(
         err.to_string(),
-        format!("1@{} is no line of thread t.", e0 + 1)
+        format!("1@{} is not a line of thread t.", e0 + 1)
     );
 }
 

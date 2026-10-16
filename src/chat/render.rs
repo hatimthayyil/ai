@@ -118,7 +118,7 @@ pub fn clip(s: &str, max: usize) -> String {
     let head = &s[..s.floor_char_boundary(max / 2)];
     let tail = &s[s.ceil_char_boundary(s.len() - max / 2)..];
     let cut = s.len() - head.len() - tail.len();
-    format!("{head} [... {cut} bytes cut ...] {tail}")
+    format!("{head} [{cut} bytes cut] {tail}")
 }
 
 #[cfg(test)]
@@ -134,7 +134,7 @@ mod tests {
         assert_eq!(clip("short", 10), "short");
         assert_eq!(clip("short", WHOLE), "short");
         let s = format!("{}{}", "a".repeat(10), "b".repeat(10));
-        assert_eq!(clip(&s, 8), "aaaa [... 12 bytes cut ...] bbbb");
+        assert_eq!(clip(&s, 8), "aaaa [12 bytes cut] bbbb");
         let c = clip(&"é".repeat(10), 7);
         assert!(c.starts_with("é [") && c.ends_with("] é"), "{c}");
     }
@@ -192,7 +192,7 @@ mod tests {
         assert_eq!(
             edit,
             format!(
-                "3.7|tool Bash: new_string=y old_str [... 34 bytes cut ...] {}",
+                "3.7|tool Bash: new_string=y old_str [34 bytes cut] {}",
                 "x".repeat(20)
             )
         );
@@ -207,7 +207,7 @@ mod tests {
         assert_eq!(
             result(true),
             format!(
-                "3.7|error: {} [... 20 bytes cut ...] {}",
+                "3.7|error: {} [20 bytes cut] {}",
                 "h".repeat(20),
                 "t".repeat(20)
             )

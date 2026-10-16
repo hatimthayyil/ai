@@ -4,7 +4,7 @@ The `ai` CLI: an all-in-one AI tool.
 
 - `ai memory`: permanent memory for AI agents. An agent records what it learns as one-line notes. Claude Code folds older notes into summaries, and `ai memory wake` prints the whole memory as one short view.
 - `ai notes`: a global knowledge store for AI agents. Each note is one claim, filed in a tree of topics; Claude Code summarises every topic from its children, so an agent can browse the tree or search it.
-- `ai chat`: named conversations that outlive harness sessions. A thread copies its Claude Code sessions into the repository's git, summarises them into a zoomable tree, and replaces the session's compaction with a view of the whole thread.
+- `ai chat`: named conversations that span agent sessions. A thread copies its Claude Code sessions into the repository's git, summarises them into a tree you can zoom, and replaces the session's compaction with a view of the whole thread.
 
 ## Install
 
@@ -50,11 +50,12 @@ ai chat start dev [-- claude args]   # Claude Code in a new session of thread de
 ai chat resume dev [-- claude args]  # continue dev's newest session, in the directory it ran in
 ai chat list                         # the threads here and their sessions
 ai chat view -t dev                  # dev's view
-ai chat zoom -t dev <id>             # open a line of it
+ai chat zoom -t dev <id>             # open a line of it; --tool-output adds tool output
+ai chat grep -t dev <regex>          # search it
 ai chat summarise -t dev             # write its summaries now; --rebuild, --model, --dry-run
 ```
 
-Inside a session, `/ai attach <name>`, `/ai detach` and `/ai compress`; `-t` defaults to the session's thread, so the agent reads it with `ai chat view` and `ai chat zoom <id>`. An attached session's `/compact` and auto-compaction replace its context with the thread's view, not Claude Code's summary. Threads live under `refs/ai/chat/` in the repository, so each repository has its own; `git config ai.chat.model` picks the summariser's model.
+Inside a session, `/ai attach <name>`, `/ai detach` and `/ai compress`; `-t` defaults to the session's thread, so the agent reads it with `ai chat view` and `ai chat zoom <id>`. In an attached session, `/compact` and auto-compaction replace the context with the thread's view. Threads live under `refs/ai/chat/` in the repository, so each repository has its own; `git config ai.chat.model` picks the summariser's model.
 
 This needs the Claude Code plugin in `share/ai/plugins/claude` of the package (`plugins/claude` here). Load it in every session with the `env` block of `~/.claude/settings.json`:
 

@@ -21,7 +21,7 @@ pub const FOLD_LINES: usize = 64;
 pub const RAIL: usize = 8_000;
 /// The most the open turn prints, in bytes.
 pub const OPEN: usize = 16_000;
-/// The most of a message's words the fold prints for a turn not summarized yet.
+/// The most of a message's words the fold prints for a turn not summarised yet.
 pub const LINE: usize = 512;
 /// The most of one message's words a listing prints.
 const WORDS: usize = 8_000;
@@ -30,29 +30,30 @@ const TOOL: usize = 2_000;
 /// The most of a tool call's input a zoom lists, on one line.
 const CALL: usize = 400;
 
-const FOLD: &str = "Earlier turns, summarized";
+const FOLD: &str = "Earlier turns, summarised";
 const USER: &str = "The user's latest messages";
 const CURRENT: &str = "The turn in progress";
 const PREVIOUS: &str = "The previous session's last turn";
 
 const INSTRUCTION: &str = "\
-This is the thread `{name}`: the conversation so far, oldest first, in place of the context you \
-had. Where two lines disagree, the later one holds.
+This is the thread `{name}`: your conversation so far, oldest first, in place of the context \
+you had. When two lines disagree, trust the later one.
 
-A turn is one message from the user or another agent, and everything you did to answer it. \
-Turns are numbered from 0, and the items of a turn from 0, item 0 being its message. Each line \
-is `id|text`:
-- `12|` summarizes turn 12, and `8+4|` turns 8 to 11.
-- `12.3|` is item 3 of turn 12, and `12.3+7|` summarizes its items 3 to 9.
-An item's text continues on lines indented by two spaces. A summary cites the item that holds \
-a detail in brackets, as [12.3].
+A turn is one message from the user or another agent, plus everything you did to answer it. \
+Turns count from 0, and so do the items of a turn; item 0 is the turn's message. Each line is \
+`id|text`:
+- `12|` summarises turn 12; `8+4|` summarises turns 8 to 11.
+- `12.3|` is item 3 of turn 12; `12.3+7|` summarises its items 3 to 9.
+An item's text continues on lines indented by two spaces. Summaries cite the item that holds a \
+detail, as [12.3].
 
-To see what a line was made from, zoom it: `ai chat zoom 8+4`. Any turn, item or range of them \
-zooms. A zoom lists tool calls without their output; add `--tool-output` to see it. \
-`ai chat grep <regex>` searches the thread the same way. Long output comes in parts: run the \
-command each part ends with.
+Zoom a line to see what it was made from: `ai chat zoom 8+4`. You can zoom any turn, item or \
+range. Zoom lists tool calls without their output; add `--tool-output` to include it. \
+`ai chat grep <regex>` searches the thread and takes the same flag. Long output comes in parts; \
+each part ends with the command for the next.
 
-Summaries keep little tool output: say in your replies what you learned that will matter later.
+Summaries keep little tool output, so state in your replies what you learned that you will \
+need later.
 ";
 
 /// The fold over `t` closed turns: from one line each, merges the most due aligned pair,
@@ -389,7 +390,7 @@ impl Branch {
     }
 
     fn placeholder(id: Id) -> String {
-        format!("{id}|(not summarized yet)")
+        format!("{id}|(not summarised yet)")
     }
 
     /// The lines the fold wants: at most [`FOLD_LINES`].
@@ -703,7 +704,7 @@ mod tests {
         assert_eq!(b.closed(), 7);
         let all = b.render();
         assert_eq!(all.len(), 7);
-        assert_eq!(all[0], "0|(not summarized yet)");
+        assert_eq!(all[0], "0|(not summarised yet)");
         let b = branch(
             chain("utututututututut", short),
             &[(1, 1, "first"), (1, 3, "second"), (1, 7, "fourth")],
@@ -713,11 +714,11 @@ mod tests {
             [
                 "0|first",
                 "1|second",
-                "2|(not summarized yet)",
+                "2|(not summarised yet)",
                 "3|fourth",
-                "4|(not summarized yet)",
-                "5|(not summarized yet)",
-                "6|(not summarized yet)",
+                "4|(not summarised yet)",
+                "5|(not summarised yet)",
+                "6|(not summarised yet)",
             ],
         );
         let key = |last| Key { level: 1, last };
@@ -741,8 +742,8 @@ mod tests {
             fold[..3],
             [
                 "0+2|first two",
-                "2+2|(not summarized yet)",
-                "4|(not summarized yet)"
+                "2+2|(not summarised yet)",
+                "4|(not summarised yet)"
             ],
             "2+2 would fall back to two lines, one too many: it stays one"
         );
@@ -768,7 +769,7 @@ mod tests {
             [
                 "0.0|user: m0",
                 "0.1+6|read the config",
-                "0.7+3|(not summarized yet)",
+                "0.7+3|(not summarised yet)",
             ]
         );
         assert_eq!(
@@ -781,7 +782,7 @@ mod tests {
         );
         assert_eq!(
             render(&[(0, 9, "ran the tests")]),
-            ["0|(not summarized yet)"],
+            ["0|(not summarised yet)"],
             "chunk lines count from the first"
         );
     }
@@ -844,7 +845,7 @@ mod tests {
         assert_eq!(open[0], "1.0|user: run the benchmarks");
         assert_eq!(open[1], "1.1+11|(not shown)");
         assert_eq!(ids(&open[2..]), ["1.12"], "whole steps");
-        assert!(open[2].starts_with("1.12|ai: 14:") && open[2].contains("bytes cut ...]"));
+        assert!(open[2].starts_with("1.12|ai: 14:") && open[2].contains("bytes cut]"));
         assert!(bytes(&open) <= OPEN);
 
         let flood = "u".to_string() + &"c".repeat(40) + &"r".repeat(40);
@@ -880,7 +881,7 @@ mod tests {
         let huge = |i: usize| format!("{i}{}", "q".repeat(20_000));
         let rail = branch(chain("utu", huge), &[]).rail();
         assert_eq!(rail.len(), 1, "the newest always, cut");
-        assert!(rail[0].len() < RAIL + 100 && rail[0].contains("bytes cut ...]"));
+        assert!(rail[0].len() < RAIL + 100 && rail[0].contains("bytes cut]"));
     }
 
     #[test]
@@ -911,8 +912,8 @@ mod tests {
         assert_eq!(zoom("0+2", false).unwrap(), "0|one\n1|two");
         assert_eq!(
             zoom("0+4", false).unwrap(),
-            "0|one\n1|two\n2.0|user: m4\n2.1+3|ran\n2.4|(not summarized yet)\n\
-             3|(not summarized yet)",
+            "0|one\n1|two\n2.0|user: m4\n2.1+3|ran\n2.4|(not summarised yet)\n\
+             3|(not summarised yet)",
             "four turn lines; turn 2 is not built, so what is built under it"
         );
         assert_eq!(

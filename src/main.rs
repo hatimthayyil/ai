@@ -15,7 +15,7 @@ enum Command {
     Memory(ai_tools::memory::Cli),
     #[command(about = "A global knowledge store for AI agents.")]
     Notes(ai_tools::notes::Cli),
-    #[command(about = "Named, repo-local conversations that outlive harness sessions.")]
+    #[command(about = "Named conversations that span agent sessions, kept in this repository.")]
     Chat(ai_tools::chat::Cli),
 }
 

@@ -41,7 +41,7 @@ async function sync($: EngineInterface, args: string[]): Promise<void> {
 
 function reply(ran: Ran): string {
   if (ran.exitCode === 0) return ran.stdout.trim()
-  if (ran.exitCode === NOT_ATTACHED) return 'This session is not attached to an ai chat thread.'
+  if (ran.exitCode === NOT_ATTACHED) return 'This session is not attached to a thread. Attach it with /ai attach <name>.'
   return ran.stderr.trim() || `ai chat exited with code ${ran.exitCode}.`
 }
 
@@ -59,7 +59,7 @@ export const register: Register = on => {
     await $.tool.register({
       name: 'compress',
       description:
-        'Compacts this conversation into its ai chat thread view once the current turn ends. Only for a session attached to an ai chat thread.',
+        "Compact this session into its ai chat thread's view when the current turn ends. Works only in a session attached to a thread.",
       inputSchema: { type: 'object', properties: {} },
     })
     return next(e)
@@ -69,7 +69,7 @@ export const register: Register = on => {
     await $.state.set(transcript, e.transcript_path)
     const started = await next(e)
     if (e.source !== 'startup') return started
-    const seed = await view($, sessionArgs(e.session_id, e.transcript_path), 'starting without the thread')
+    const seed = await view($, sessionArgs(e.session_id, e.transcript_path), "starting without the thread's view")
     if (seed === undefined) return started
     return { ...started, additionalContext: [...(started.additionalContext ?? []), seed] }
   })
@@ -77,7 +77,7 @@ export const register: Register = on => {
   on('session.compact', async ($, e, next) => {
     if (e.agentId !== undefined) return next(e)
     await $.clock.sleep(FLUSH_MS)
-    const text = await view($, await session($), 'compacting natively')
+    const text = await view($, await session($), "using Claude Code's own compaction")
     if (text === undefined) return next(e)
     return { messages: [{ role: 'user', text, toolUses: [] }] }
   })

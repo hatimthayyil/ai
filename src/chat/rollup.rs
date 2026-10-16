@@ -438,7 +438,7 @@ mod tests {
             output: "o".repeat(3 * CLIP),
             is_error: false,
         });
-        assert!(result.len() < CLIP + 100 && result.contains("bytes cut ...]"));
+        assert!(result.len() < CLIP + 100 && result.contains("bytes cut]"));
         let reply = r(Kind::Text("t".repeat(INPUT)));
         assert!(reply.len() < INPUT / 2 + 100 && reply.len() > INPUT / 2);
     }
