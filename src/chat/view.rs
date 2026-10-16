@@ -284,6 +284,24 @@ impl Branch {
         Some(hits)
     }
 
+    /// The key of the line `id` names on this branch: a closed turn, a node over closed turns,
+    /// or a chunk that no longer grows; `None` if it names no line.
+    pub fn line_key(&self, id: Id) -> Option<Key> {
+        match id {
+            Id::Turns { first, n } => Some(self.key(Coord::at(first, n, self.closed())?)),
+            Id::Items { turn, .. } => {
+                let r = self.positions(id)?;
+                let cuts = &self.cuts[turn as usize];
+                let at = cuts.iter().position(|c| *c == r)?;
+                let open = turn == self.closed() && at + 1 == cuts.len();
+                (!open).then(|| Key {
+                    level: 0,
+                    last: self.path[r.end - 1] as u64,
+                })
+            }
+        }
+    }
+
     /// The positions on the path `id` names; `None` if it is not on this branch.
     fn positions(&self, id: Id) -> Option<Range<usize>> {
         match id {

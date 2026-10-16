@@ -25,10 +25,12 @@ Runs (`Run`)
 
 `rebuild(thread, backend, deadline)` (for `ai chat summarise --rebuild`)
 - Under the thread's lock, waiting for it until the deadline (`None` if still held: nothing dropped): drops every line in one commit (`Thread::drop_lines`), then passes as `summarise` does until one starts nothing. Dropping first keeps one rule for the store (a line is written once, first write wins): a rewrite is a fresh build. Lines that fail stay unbuilt until the next summariser.
-- Rewriting one line and the lines above it (`summarise <id> --rebuild`) needs the turn ids of the view; for now every line.
 
-`dry_run(thread, backend, rebuild)` (for `--dry-run`)
-- One pass with `Run::dry` set: free lines and model replies go to the pass's in-memory map, so lines above them are built from them, and to the run's list instead of the store. With `rebuild` (`Run::fresh`) the pass reads no stored line, so it builds every line anew. No lock: it writes nothing. Each line comes back with its first item (for its printed id) and the stored line it would replace. Logged under a `dry_run` span.
+`rewrite(thread, backend, key, deadline)` (for `ai chat summarise <id> --rebuild`)
+- Under the lock as `rebuild`: drops the line and every line made from it up to the top (`Rollup::above`), in one commit (`Thread::drop_keys`), then passes on that line alone until one starts nothing: the lines under it stay, so only it is written again. The lines above wait for the next summariser, so a rewrite costs one call, and the user sees the new line before paying for the rest. Returns how many lines it dropped and how many of those were above it.
+
+`dry_run(thread, backend, rebuild, line)` (for `--dry-run`)
+- One pass with `Run::dry` set: free lines and model replies go to the pass's in-memory map, so lines above them are built from them, and to the run's list instead of the store. With `rebuild` the pass reads no stored line (`Anew::All`), so it builds every line anew; with `line` it builds that line and the unbuilt ones under it, and with both it reads that one line as unbuilt (`Anew::Line`), as `rewrite` would write it. No lock: it writes nothing. Each line comes back with its first item (for its printed id) and the stored line it would replace. Logged under a `dry_run` span.
 
 `Chat::spawn_summariser(thread)` (for `ai chat sync-session`)
 - Unless `ai.chat.summarise` is false: this executable as `chat summarise -t <name>` from the repository's work tree (else its git dir), detached by `memory::log::spawn` (stdin/stdout null, stderr to the thread's log, own process group). No readiness check: a summariser with nothing to do exits after one pass, and sync stays fast.

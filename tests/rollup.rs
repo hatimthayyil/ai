@@ -14,7 +14,7 @@ use std::{
 use ai_tools::{
     chat::{
         Built, Chat, Id, Key, Line, LineKind, Rollup, Source, Thread, build, dry_run, rebuild,
-        rollup, summarise,
+        rewrite, rollup, summarise,
     },
     memory::{Backend, Block, Conversation, JOBS, NODE, SCALE, claude},
 };
@@ -656,13 +656,13 @@ fn a_dry_run_builds_in_memory_and_stores_nothing() {
     let (before, at) = (texts(&t), head(&r));
 
     let fake = Fake::new();
-    let d = dry_run(&t, fake.backend(), false).unwrap();
+    let d = dry_run(&t, fake.backend(), false, None).unwrap();
     assert_eq!(
         (d.built, d.lines.len(), fake.calls()),
         (Built::default(), 0, 0)
     );
 
-    let d = dry_run(&t, fake.backend(), true).unwrap();
+    let d = dry_run(&t, fake.backend(), true, None).unwrap();
     assert_eq!((d.built.lines, d.built.calls, fake.calls()), (3, 3, 3));
     let got: Vec<(u64, Key, bool)> = d
         .lines
@@ -689,6 +689,92 @@ fn a_dry_run_builds_in_memory_and_stores_nothing() {
             .all(|l| l.text.starts_with("turn ") || l.text.starts_with("merge "))
     );
     assert_eq!((texts(&t), head(&r)), (before, at), "nothing stored");
+}
+
+#[test]
+fn rewrite_drops_the_line_and_those_above_it() {
+    let r = Repo::new();
+    let mut s = Script::new();
+    let e0 = s.turn(0);
+    let e1 = s.turn(1);
+    s.turn(2);
+    let e3 = s.turn(3);
+    s.user("open");
+    let t = r.thread(&s);
+    assert_eq!(summarised(&t, &Fake::new()).calls, 4 + 2 + 1);
+    let before = texts(&t);
+
+    let fake = Fake::with(Duration::from_millis(2), |_| false);
+    let d = dry_run(&t, fake.backend(), true, Some(key(2, e1))).unwrap();
+    assert_eq!(
+        d.lines
+            .iter()
+            .map(|l| (l.key, l.was.clone()))
+            .collect::<Vec<_>>(),
+        [(key(2, e1), Some(before[&format!("2@{e1}")].clone()))],
+        "a dry rewrite writes that line alone"
+    );
+    let d = dry_run(&t, fake.backend(), false, Some(key(1, e0))).unwrap();
+    assert!(d.lines.is_empty(), "a written line has nothing to write");
+    assert_eq!(texts(&t), before, "nothing stored");
+
+    let w = rewrite(
+        &t,
+        fake.backend(),
+        key(1, e0),
+        Instant::now() + Duration::from_secs(5),
+    )
+    .unwrap()
+    .expect("the lock is free");
+    assert_eq!(
+        (w.dropped, w.above, w.built.lines, w.built.calls),
+        (3, 2, 1, 1)
+    );
+    let got: Vec<Key> = lines(&t).into_keys().collect();
+    assert!(got.contains(&key(1, e0)) && !got.contains(&key(2, e1)) && !got.contains(&key(3, e3)));
+    assert_eq!(got.len(), 5);
+    assert_eq!(summarised(&t, &fake).calls, 2, "the lines above, again");
+    assert_eq!(lines(&t).len(), 7);
+
+    let err = rewrite(&t, fake.backend(), key(1, e0 + 1), Instant::now()).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        format!("1@{} is no line of thread t.", e0 + 1)
+    );
+}
+
+#[test]
+fn a_dry_run_names_its_lines_by_id() {
+    let r = Repo::new();
+    let mut s = Script::new();
+    s.turn(0);
+    s.turn(1);
+    let big = s.user("read every file");
+    s.steps(14);
+    s.ai("read them all");
+    s.turn(3);
+    s.user("next");
+    let t = r.thread(&s);
+    let tree = t.snapshot().unwrap().tree().unwrap();
+    let d = dry_run(&t, Fake::new().backend(), false, None).unwrap();
+    let place = |seq: u64| tree.place(seq as usize);
+    let ids: Vec<String> = d
+        .lines
+        .iter()
+        .map(|l| Id::line(l.key.level, place(l.first), place(l.key.last)).to_string())
+        .collect();
+    let chunks: Vec<&String> = ids.iter().filter(|i| i.starts_with("2.")).collect();
+    assert_eq!(chunks.len(), 2, "{ids:?}");
+    let n = chunks[0]
+        .strip_prefix("2.1+")
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    assert_eq!(*chunks[1], format!("2.{}+{}", n + 1, 43 - n));
+    let mut rest: Vec<&String> = ids.iter().filter(|i| !i.starts_with("2.")).collect();
+    rest.sort();
+    assert_eq!(rest, ["0", "0+2", "0+4", "1", "2", "2+2", "3"]);
+    assert_eq!(place(big).turn, 2);
 }
 
 #[test]

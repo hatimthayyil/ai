@@ -27,6 +27,7 @@ Reading
 Summarising
 - `summarise`: `summarise::summarise` with `--model`, else the configured model (`Chat::backend`). Prints `Wrote N lines, M by the model.` or `Nothing to write.`, or that another summariser holds the lock (it writes the same lines). Spawned by `sync-session` as `summarise -t <name>`: stdout null, stderr the log.
 - `--rebuild`: `summarise::rebuild`, waiting up to `WAIT` for a running summariser; prints `Dropped N lines; wrote M, K by the model.`
+- `<id>`: one line, its key from the picked branch (`Branch::line_key`: a closed turn, an aligned node over closed turns, or a chunk that no longer grows; anything else is a sentence naming the three). Alone: `summarise::build` of that line and the unbuilt lines under it, or `<id> is written already. Rewrite it with --rebuild.` With `--rebuild`: `summarise::rewrite`, then `Dropped N lines; wrote M, K by the model.` and, when lines above it went, that the next summarise writes them again.
 - `--dry-run` (with or without `--rebuild`): `summarise::dry_run`; prints each line as the view would (`8+4|text`, `12.3+7|text`: `Id::line` from the places of its first and last items), the line it replaces indented under it as `was:`, then the totals. Stores nothing; still calls the model.
 - Failed lines follow the totals (`Failed <key>: <why>`); exit 1 if any failed.
 

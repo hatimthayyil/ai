@@ -300,6 +300,22 @@ impl Thread {
         Ok(n)
     }
 
+    /// Drops the lines among `keys` that are built, in one commit; how many it dropped.
+    pub fn drop_keys(&self, keys: &[Key]) -> Result<usize> {
+        let (n, _) = self.mutate("drop lines", |s| {
+            let mut ch = Changes::default();
+            let mut n = 0;
+            for &k in keys {
+                if s.line(k)?.is_some() {
+                    ch.remove(line_path(k));
+                    n += 1;
+                }
+            }
+            Ok((n, ch))
+        })?;
+        Ok(n)
+    }
+
     /// Writes the line `key` unless it is built; returns the line stored.
     pub fn put_line(&self, key: Key, kind: LineKind, who: &Who, text: &str) -> Result<Line> {
         let line = Line {

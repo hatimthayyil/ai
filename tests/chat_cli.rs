@@ -919,3 +919,74 @@ fn summarise_writes_rewrites_and_dry_runs_the_lines() {
         .unwrap();
     assert_eq!(format!("0|{}\n", line.text), fresh);
 }
+
+#[test]
+fn summarise_writes_or_rewrites_one_line() {
+    let s = Sandbox::new();
+    s.transcript("s-1", &talk(5, |k| format!("question {k}")));
+    ok(
+        s.ai_in("s-1", &["attach", "dev"]),
+        "Attached to dev, a new thread.\n",
+    );
+    let ends = turn_ends(&s, "dev");
+    s.line("dev", 1, ends[0], "by hand");
+    ok(
+        s.ai_in("s-1", &["summarise", "0+2"]),
+        "Wrote 2 lines, 0 by the model.\n",
+    );
+    ok(
+        s.ai_in("s-1", &["summarise", "0"]),
+        "0 is written already. Rewrite it with --rebuild.\n",
+    );
+    ok(
+        s.ai_in("s-1", &["summarise", "0", "--rebuild", "--dry-run"]),
+        "0|user: question 0 ai: reply 0\n  was: by hand\n\
+         Dry run: 1 line, 0 by the model; nothing stored.\n",
+    );
+    let dry = stdout(&s.ai(&["summarise", "-t", "dev", "2+2", "--dry-run"]));
+    let ids: Vec<&str> = dry.lines().map(|l| l.split('|').next().unwrap()).collect();
+    assert_eq!(
+        ids,
+        [
+            "2",
+            "3",
+            "2+2",
+            "Dry run: 3 lines, 0 by the model; nothing stored."
+        ],
+        "{dry}"
+    );
+    ok(
+        s.ai_in("s-1", &["summarise"]),
+        "Wrote 4 lines, 0 by the model.\n",
+    );
+    ok(
+        s.ai_in("s-1", &["summarise", "0", "--rebuild"]),
+        "Dropped 3 lines; wrote 1, 0 by the model.\n\
+         The next ai chat summarise -t dev writes the 2 lines above 0 again.\n",
+    );
+    let t = s.chat().thread("dev").unwrap();
+    let snap = t.snapshot().unwrap();
+    let line = |level, last| snap.line(Key { level, last }).unwrap();
+    assert_eq!(
+        line(1, ends[0]).unwrap().text,
+        "user: question 0 ai: reply 0"
+    );
+    assert!(line(2, ends[1]).is_none() && line(3, ends[3]).is_none());
+    assert!(line(2, ends[3]).is_some(), "2+2 is not above 0");
+    ok(
+        s.ai_in("s-1", &["summarise"]),
+        "Wrote 2 lines, 0 by the model.\n",
+    );
+    fails(
+        s.ai_in("s-1", &["summarise", "4"]),
+        "4 is no line of this branch. A line is a closed turn (12), an aligned node over closed turns (8+4) or a chunk (12.3+7).\n",
+    );
+    fails(
+        s.ai_in("s-1", &["summarise", "1+3"]),
+        "1+3 is no line of this branch. A line is a closed turn (12), an aligned node over closed turns (8+4) or a chunk (12.3+7).\n",
+    );
+    fails(
+        s.ai_in("s-1", &["summarise", "x"]),
+        "'x' is not an id. Ids look like 12 (a turn), 8+4 (turns 8 to 11) or 12.3+7 (a chunk).\n",
+    );
+}

@@ -322,6 +322,21 @@ impl Rollup {
         self.lines.get(&key)
     }
 
+    /// The lines made from line `key`, and from those, up to the top.
+    pub fn above(&self, key: Key) -> Vec<Key> {
+        let mut out = Vec::new();
+        let mut stack = vec![key];
+        while let Some(k) = stack.pop() {
+            for (&p, s) in &self.lines {
+                if s.children().contains(&k) && !out.contains(&p) {
+                    out.push(p);
+                    stack.push(p);
+                }
+            }
+        }
+        out
+    }
+
     /// Item `seq` as a call reads it.
     pub fn text(&self, seq: u64) -> &str {
         &self.texts[seq as usize]

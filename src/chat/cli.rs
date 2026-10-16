@@ -17,7 +17,7 @@ use crate::{
         id::Id,
         record::Binding,
         store::{Chat, Snapshot, Thread, check_name},
-        summarise::{build, dry_run, rebuild, summarise},
+        summarise::{build, dry_run, rebuild, rewrite, summarise},
         sync::Synced,
         view::Branch,
     },
@@ -113,13 +113,15 @@ enum Command {
         )]
         before: Option<String>,
     },
-    #[command(about = "write a thread's summary lines that are ready.")]
+    #[command(about = "write a thread's summary lines that are ready, or one line.")]
     Summarise {
         #[command(flatten)]
         target: Target,
+        #[arg(help = "one line: 12 for turn 12, 8+4 for a node, 12.3+7 for a chunk")]
+        id: Option<String>,
         #[arg(
             long,
-            help = "rewrite the lines already written, and the lines above them"
+            help = "rewrite the lines already written (or the one line), and drop the lines above them"
         )]
         rebuild: bool,
         #[arg(
@@ -251,10 +253,19 @@ impl Cli {
             } => grep(cwd, out, target, &pat, tool_output, before.as_deref()),
             Command::Summarise {
                 target,
+                id,
                 rebuild,
                 model,
                 dry_run,
-            } => summarise_cmd(cwd, out, target, rebuild, model.as_deref(), dry_run),
+            } => summarise_cmd(
+                cwd,
+                out,
+                target,
+                id.as_deref(),
+                rebuild,
+                model.as_deref(),
+                dry_run,
+            ),
             Command::SyncSession { session } => sync_session(cwd, session),
             Command::CompactSession { session } => compact_session(cwd, out, session),
         }
@@ -681,21 +692,75 @@ fn grep(
     Ok(ExitCode::SUCCESS)
 }
 
-/// Writes the thread's ready lines, or with `again` rewrites them all; with `dry`, prints
-/// what it would write and stores nothing.
+/// Writes the thread's ready lines, or with `again` rewrites them all; with `id`, that one
+/// line. With `dry`, prints what it would write and stores nothing.
 fn summarise_cmd(
     cwd: &Path,
     out: &mut dyn Write,
     target: Target,
+    id: Option<&str>,
     again: bool,
     model: Option<&str>,
     dry: bool,
 ) -> Result<ExitCode> {
-    let (chat, t, _) = pick(cwd, target)?;
+    let (chat, t, session) = pick(cwd, target)?;
+    let line = match id {
+        Some(v) => {
+            let id = Id::parse(v).with_context(|| {
+                format!("'{v}' is not an id. Ids look like 12 (a turn), 8+4 (turns 8 to 11) or 12.3+7 (a chunk).")
+            })?;
+            let key = read_branch(&t.snapshot()?, session.as_ref())?
+                .and_then(|b| b.line_key(id))
+                .with_context(|| {
+                    format!("{id} is no line of this branch. A line is a closed turn (12), an aligned node over closed turns (8+4) or a chunk (12.3+7).")
+                })?;
+            Some((id, key))
+        }
+        None => None,
+    };
     let backend = chat.backend(model)?;
-    let built = match (dry, again) {
-        (true, _) => {
-            let d = dry_run(&t, backend, again)?;
+    let built = match (dry, again, line) {
+        (false, true, Some((id, key))) => {
+            let Some(r) = rewrite(&t, backend, key, Instant::now() + WAIT)? else {
+                bail!(
+                    "A summariser is still running on {}. Try again when it ends.",
+                    t.name()
+                );
+            };
+            writeln!(
+                out,
+                "Dropped {}; wrote {}, {} by the model.",
+                plural(r.dropped as u64, "line"),
+                r.built.lines,
+                r.built.calls
+            )?;
+            if r.above > 0 {
+                writeln!(
+                    out,
+                    "The next ai chat summarise -t {} writes the {} above {id} again.",
+                    t.name(),
+                    plural(r.above as u64, "line")
+                )?;
+            }
+            r.built
+        }
+        (false, false, Some((id, key))) => {
+            let b = build(&t, backend, &[key], Instant::now() + WAIT)?;
+            match b.lines {
+                0 if b.failed.is_empty() => {
+                    writeln!(out, "{id} is written already. Rewrite it with --rebuild.")?
+                }
+                n => writeln!(
+                    out,
+                    "Wrote {}, {} by the model.",
+                    plural(n, "line"),
+                    b.calls
+                )?,
+            }
+            b
+        }
+        (true, _, line) => {
+            let d = dry_run(&t, backend, again, line.map(|l| l.1))?;
             let tree = t.snapshot()?.tree()?;
             for l in &d.lines {
                 let place = |seq: u64| tree.place(seq as usize);
@@ -713,7 +778,7 @@ fn summarise_cmd(
             )?;
             d.built
         }
-        (false, true) => {
+        (false, true, None) => {
             let Some((dropped, b)) = rebuild(&t, backend, Instant::now() + WAIT)? else {
                 bail!(
                     "A summariser is still running on {}. Try again when it ends.",
@@ -729,7 +794,7 @@ fn summarise_cmd(
             )?;
             b
         }
-        (false, false) => {
+        (false, false, None) => {
             let Some(b) = summarise(&t, backend)? else {
                 writeln!(
                     out,

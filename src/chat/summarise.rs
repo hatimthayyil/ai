@@ -231,9 +231,79 @@ pub fn rebuild(
     Ok(Some((dropped, built)))
 }
 
-/// What [`summarise`] would write now, or with `rebuild` what [`rebuild`] would: each line
-/// built with the model and stored nowhere; logs to [`Thread::log_path`].
-pub fn dry_run(thread: &Thread, backend: Arc<dyn Backend>, rebuild: bool) -> Result<Dry> {
+/// What [`rewrite`] did.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Rewrote {
+    /// Lines dropped: the line, if it was written, and those above it.
+    pub dropped: usize,
+    /// Of those, the lines above it, which the next [`summarise`] writes again.
+    pub above: usize,
+    pub built: Built,
+}
+
+/// Rewrites line `key`: under the thread's lock, waiting for it until `deadline`, drops it and
+/// the lines made from it up to the top, in one commit, then writes it again from the lines
+/// under it; logs to [`Thread::log_path`]. `None` if another summariser still holds the lock
+/// at the deadline. A key that is no line of the thread is an error.
+pub fn rewrite(
+    thread: &Thread,
+    backend: Arc<dyn Backend>,
+    key: Key,
+    deadline: Instant,
+) -> Result<Option<Rewrote>> {
+    let _log = log::init(&thread.log_path()?)?;
+    let _span = info_span!(
+        "rewrite",
+        pid = process::id(),
+        thread = thread.name(),
+        line = %key,
+        model = backend.model()
+    )
+    .entered();
+    let Some(lock) = thread.lock_before(deadline)? else {
+        warn!("the lock was still held at the deadline; rewrote nothing");
+        return Ok(None);
+    };
+    let snap = thread.snapshot()?;
+    let roll = Rollup::new(&snap.tree()?);
+    if roll.source(key).is_none() {
+        bail!("{key} is no line of thread {}.", thread.name());
+    }
+    let above = roll.above(key);
+    let built_above = above
+        .iter()
+        .map(|&k| snap.line(k).map(|l| l.is_some()))
+        .collect::<Result<Vec<bool>>>()?;
+    let dropped = thread.drop_keys(&[&[key][..], &above].concat())?;
+    info!(dropped, "dropped");
+    let mut run = Run::new(thread, backend);
+    loop {
+        let tried = run.tried();
+        run.pass(Some(&[key]), None)?;
+        if run.tried() == tried {
+            break;
+        }
+    }
+    let built = run.built.clone();
+    drop(run);
+    lock.unlock()?;
+    info!(lines = built.lines, calls = built.calls, "end");
+    Ok(Some(Rewrote {
+        dropped,
+        above: built_above.into_iter().filter(|&b| b).count(),
+        built,
+    }))
+}
+
+/// What [`summarise`] would write now, or with `rebuild` what [`rebuild`] would; with `line`,
+/// what [`build`] of that line would, or with `rebuild` what [`rewrite`] would. Each line built
+/// with the model and stored nowhere; logs to [`Thread::log_path`].
+pub fn dry_run(
+    thread: &Thread,
+    backend: Arc<dyn Backend>,
+    rebuild: bool,
+    line: Option<Key>,
+) -> Result<Dry> {
     let _log = log::init(&thread.log_path()?)?;
     let _span = info_span!(
         "dry_run",
@@ -245,8 +315,13 @@ pub fn dry_run(thread: &Thread, backend: Arc<dyn Backend>, rebuild: bool) -> Res
     info!(rebuild, "start");
     let mut run = Run::new(thread, backend);
     run.dry = Some(Vec::new());
-    run.fresh = rebuild;
-    run.pass(None, None)?;
+    run.anew = match (rebuild, line) {
+        (false, _) => Anew::None,
+        (true, None) => Anew::All,
+        (true, Some(k)) => Anew::Line(k),
+    };
+    let want = line.map(|k| vec![k]);
+    run.pass(want.as_deref(), None)?;
     let snap = thread.snapshot()?;
     let roll = Rollup::new(&snap.tree()?);
     let old = snap.all_lines()?;
@@ -296,8 +371,16 @@ struct Run<'t> {
     built: Built,
     /// A dry run's lines, kept here instead of stored; `None` stores them.
     dry: Option<Vec<(Key, String)>>,
-    /// Whether every line is built anew, the stored ones read as unbuilt.
-    fresh: bool,
+    /// The stored lines read as unbuilt, to build them anew.
+    anew: Anew,
+}
+
+/// Which stored lines a run reads as unbuilt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Anew {
+    None,
+    All,
+    Line(Key),
 }
 
 /// Build order: oldest first, and a line before the node over it that ends where it ends.
@@ -322,7 +405,7 @@ impl<'t> Run<'t> {
             streak: 0,
             built: Built::default(),
             dry: None,
-            fresh: false,
+            anew: Anew::None,
         }
     }
 
@@ -340,14 +423,17 @@ impl<'t> Run<'t> {
     ) -> Result<Option<ObjectId>> {
         let snap = self.thread.snapshot()?;
         let roll = Rollup::new(&snap.tree()?);
-        let mut lines: HashMap<Key, String> = match self.fresh {
-            true => HashMap::new(),
-            false => snap
+        let mut lines: HashMap<Key, String> = match self.anew {
+            Anew::All => HashMap::new(),
+            _ => snap
                 .all_lines()?
                 .into_iter()
                 .map(|(k, l)| (k, l.text))
                 .collect(),
         };
+        if let Anew::Line(k) = self.anew {
+            lines.remove(&k);
+        }
         let mut todo: BTreeSet<(u64, u32)> = match want {
             Some(keys) => self.closure(&roll, &lines, keys)?,
             None => roll
