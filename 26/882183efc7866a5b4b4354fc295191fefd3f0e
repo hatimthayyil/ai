@@ -1,0 +1,52 @@
+plugins/claude/tests/ai.test.ts
+  s_77b04d9838f161::t_15d160f7f565d6 105,129,166
+README.md
+  s_77b04d9838f161::t_ff8a54682b3288 53-54
+  s_77b04d9838f161::t_a223bddad8a718 58
+  s_77b04d9838f161::t_512d6944eb933b 7
+src/chat/rollup.rs
+  s_77b04d9838f161::t_f7f57c25ae694f 441
+ai/comments/src/chat/render.rs.md
+  s_77b04d9838f161::t_f7f57c25ae694f 9
+src/chat/summarise.rs
+  s_77b04d9838f161::t_6200a9d1719bb9 270,484
+tests/chat_cli.rs
+  s_77b04d9838f161::t_28287f18b82444 317
+  s_77b04d9838f161::t_59baf8b00ca5df 417,434,567,576-577,602,606
+  s_77b04d9838f161::t_6200a9d1719bb9 297,313,382,537,982,986
+src/chat/cli.rs
+  s_77b04d9838f161::t_6f3cdc382e00ce 40,61,93,97,101,115,123,127
+  s_77b04d9838f161::t_24aeac121060cb 86-88,284-285
+  s_77b04d9838f161::t_6200a9d1719bb9 301,312,496,515,596,719
+src/main.rs
+  s_77b04d9838f161::t_6f3cdc382e00ce 18
+src/chat/render.rs
+  s_77b04d9838f161::t_f7f57c25ae694f 121,137,195,210
+plugins/claude/hooks/register.ts
+  s_77b04d9838f161::t_b855369f13718f 62,72
+  s_77b04d9838f161::t_15d160f7f565d6 44,80
+src/chat/view.rs
+  s_77b04d9838f161::t_59baf8b00ca5df 24,393,707,717,719-721,745-746,772,785,915-916
+  s_77b04d9838f161::t_3c0d389b0748a9 33,39-56
+  s_77b04d9838f161::t_f7f57c25ae694f 848,884
+tests/rollup.rs
+  s_77b04d9838f161::t_6200a9d1719bb9 515,742
+ai/glossary.md
+  s_77b04d9838f161::t_14fd6e92f8b000 53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "26882183efc7866a5b4b4354fc295191fefd3f0e",
+  "prompts": {},
+  "sessions": {
+    "s_77b04d9838f161": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "799603ff-89ac-4e8a-9cfb-a9648c74f1fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Hatim Thayyil <hatim@thayyil.net>"
+    }
+  }
+}
